@@ -1,0 +1,31 @@
+# Ignorar entorno virtual
+venv/
+ENV/
+env/
+.venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.pyo
+
+# Archivos de logs
+*.log
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Carpetas de VSCode
+.vscode/
+
+# Archivos de Jupyter
+.ipynb_checkpoints/
+
+# Archivos de prueba o compilación
+build/
+dist/
+*.out
