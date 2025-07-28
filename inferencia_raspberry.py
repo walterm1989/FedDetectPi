@@ -22,6 +22,13 @@ import torch
 import torchvision
 from torchvision.transforms import functional as F
 
+# ---- Additional imports for MobileNet, TorchScript, and advanced detection support ----
+from torchvision.models.detection.backbone_utils import mobilenet_backbone
+from torchvision.models.detection import KeypointRCNN
+from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.ops import MultiScaleRoIAlign
+import os
+
 def cpu_supports_fp16_matmul():
     """
     Return True if current torch CPU backend advertises fp16 matmul support.
@@ -58,8 +65,8 @@ def parse_args():
                         help=f"Capture width (default: {DEFAULT_CAP_WIDTH})")
     parser.add_argument('--height', type=int, default=DEFAULT_CAP_HEIGHT,
                         help=f"Capture height (default: {DEFAULT_CAP_HEIGHT})")
-    parser.add_argument('--score-thr', type=float, default=0.6,
-                        help="Score threshold for person detection (default: 0.6)")
+    parser.add_argument('--score-thr', type=float, default=0.8,
+                        help="Score threshold for person detection (default: 0.8)")
     parser.add_argument('--draw-box', action='store_true',
                         help="Draw bounding boxes around detected persons")
     parser.add_argument('--log-file', type=str,
@@ -83,6 +90,13 @@ def parse_args():
     parser.set_defaults(half=DEFAULT_HALF_PRECISION)
     parser.add_argument('--target-latency-ms', type=int, default=TARGET_LATENCY_MS,
                         help=f"Soft latency budget per inference call in ms; adaptive frame skipping if not overridden (default: {TARGET_LATENCY_MS})")
+
+    # === Model selection and acceleration ===
+    parser.add_argument('--model-type', type=str, default='resnet50',
+                        choices=['resnet50', 'mobile'],
+                        help="Model backbone: 'resnet50' (default) or 'mobile' (MobilenetV3-Large+FPN, faster/lighter)")
+    parser.add_argument('--torchscript', action='store_true',
+                        help="EXPERIMENTAL: Run model as TorchScript for extra speed (fallback to eager if scripting fails)")
     return parser.parse_args()
 
 def setup_logging(log_file=None):
@@ -111,16 +125,68 @@ def get_device():
         logging.warning("CUDA is NOT available. Running on CPU (expected on Raspberry Pi).")
     return device
 
-def load_model(device):
+def load_model(model_type: str, device, torchscript: bool):
     """
-    Load a pretrained Keypoint R-CNN model and move to the specified device.
-    Switch to eval() mode for inference.
+    Load a Keypoint R-CNN model according to the specified backbone and TorchScript option.
+    Supported model_types:
+        - 'resnet50': KeypointRCNN-ResNet50-FPN (pretrained COCO)
+        - 'mobile': KeypointRCNN-MobileNetV3-Large-FPN (pretrained backbone, default RPN/ROI heads)
+    If torchscript is True, attempt to load a cached scripted model or script it afresh.
     """
-    logging.info("Loading Keypoint R-CNN model (pretrained on COCO)...")
-    model = torchvision.models.detection.keypointrcnn_resnet50_fpn(pretrained=True)
-    model.eval()
+    cache_fname = f"keypointrcnn_{model_type}_scripted.pt"
+
+    model = None
+    if model_type == "resnet50":
+        logging.info("Loading Keypoint R-CNN (ResNet50-FPN, pretrained on COCO)...")
+        model = torchvision.models.detection.keypointrcnn_resnet50_fpn(pretrained=True)
+    elif model_type == "mobile":
+        logging.info("Loading Keypoint R-CNN (MobileNetV3-Large-FPN backbone, pretrained)...")
+        backbone = mobilenet_backbone('mobilenet_v3_large', pretrained=True, fpn=True)
+        # Custom anchor generator (single FPN level)
+        anchor_generator = AnchorGenerator(
+            sizes=((16, 32, 64, 128, 256),),
+            aspect_ratios=((0.5, 1.0, 2.0),)
+        )
+        roi_pooler = MultiScaleRoIAlign(featmap_names=['0'], output_size=7, sampling_ratio=2)
+        keypoint_roi_pooler = MultiScaleRoIAlign(featmap_names=['0'], output_size=14, sampling_ratio=2)
+        model = KeypointRCNN(
+            backbone,
+            num_classes=2,  # background + person
+            num_keypoints=17,
+            rpn_anchor_generator=anchor_generator,
+            box_roi_pool=roi_pooler,
+            keypoint_roi_pool=keypoint_roi_pooler
+        )
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+
     model.to(device)
-    logging.info("Model loaded and ready.")
+    model.eval()
+
+    # TorchScript logic
+    if torchscript:
+        cache_path = os.path.abspath(cache_fname)
+        if os.path.exists(cache_path):
+            try:
+                logging.info(f"Loading TorchScript model from cache: {cache_fname}")
+                scripted = torch.jit.load(cache_path, map_location=device)
+                scripted.eval()
+                return scripted
+            except Exception as e:
+                logging.warning(f"Failed to load cached TorchScript model: {e}. Falling back to eager model.")
+        try:
+            logging.info("Compiling model with torch.jit.script (experimental)...")
+            scripted = torch.jit.script(model)
+            scripted.eval()
+            try:
+                torch.jit.save(scripted, cache_path)
+                logging.info(f"TorchScript model scripted and saved to: {cache_fname}")
+            except Exception as e:
+                logging.warning(f"TorchScript save failed (non-fatal): {e}")
+            return scripted
+        except Exception as e:
+            logging.warning(f"TorchScript compilation failed: {e}. Using eager model.")
+    logging.info("Model loaded and ready (eager mode).")
     return model
 
 def get_keypoint_edges():
@@ -221,14 +287,20 @@ def main():
     args = parse_args()
     setup_logging(args.log_file)
 
-    logging.info(f"Starting webcam keypoint detection (camera idx={args.cam_idx}, res={args.width}x{args.height})")
-    logging.info(f"proc_scale={args.proc_scale} | skip_frames={args.skip_frames} | half_precision={'ON' if args.half else 'OFF'} | target_latency_ms={getattr(args, 'target_latency_ms', TARGET_LATENCY_MS)}")
+    logging.info(
+        f"Starting webcam keypoint detection (camera idx={args.cam_idx}, res={args.width}x{args.height})"
+    )
+    logging.info(
+        f"proc_scale={args.proc_scale} | skip_frames={args.skip_frames} | half_precision={'ON' if args.half else 'OFF'} | "
+        f"target_latency_ms={getattr(args, 'target_latency_ms', TARGET_LATENCY_MS)} | "
+        f"model_type={args.model_type} | torchscript={'ENABLED' if args.torchscript else 'OFF'}"
+    )
 
     # Select device
     device = get_device()
 
-    # Load model
-    model = load_model(device)
+    # Load model with new args
+    model = load_model(args.model_type, device, args.torchscript)
 
     # === Attempt to enable half-precision inference if requested ===
     use_half = False
