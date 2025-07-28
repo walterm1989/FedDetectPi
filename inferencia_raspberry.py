@@ -25,8 +25,6 @@ from torchvision.transforms import functional as F
 # ---- Additional imports for MobileNet, TorchScript, and advanced detection support ----
 from torchvision.models.detection.backbone_utils import mobilenet_backbone
 from torchvision.models.detection import KeypointRCNN
-from torchvision.models.detection.rpn import AnchorGenerator
-from torchvision.ops import MultiScaleRoIAlign
 import os
 
 def cpu_supports_fp16_matmul():
@@ -142,20 +140,10 @@ def load_model(model_type: str, device, torchscript: bool):
     elif model_type == "mobile":
         logging.info("Loading Keypoint R-CNN (MobileNetV3-Large-FPN backbone, pretrained)...")
         backbone = mobilenet_backbone('mobilenet_v3_large', pretrained=True, fpn=True)
-        # Custom anchor generator (single FPN level)
-        anchor_generator = AnchorGenerator(
-            sizes=((16, 32, 64, 128, 256),),
-            aspect_ratios=((0.5, 1.0, 2.0),)
-        )
-        roi_pooler = MultiScaleRoIAlign(featmap_names=['0'], output_size=7, sampling_ratio=2)
-        keypoint_roi_pooler = MultiScaleRoIAlign(featmap_names=['0'], output_size=14, sampling_ratio=2)
         model = KeypointRCNN(
             backbone,
             num_classes=2,  # background + person
             num_keypoints=17,
-            rpn_anchor_generator=anchor_generator,
-            box_roi_pool=roi_pooler,
-            keypoint_roi_pool=keypoint_roi_pooler
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
