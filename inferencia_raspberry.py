@@ -23,14 +23,14 @@ import torchvision
 from torchvision.transforms import functional as F
 
 # ==== DEFAULT CONFIGURATION FOR RASPBERRY PI ====
-# These constants define the default optimization settings when running on a Raspberry Pi 4.
-# Non-technical users can tweak these to balance latency and quality.
-DEFAULT_CAP_WIDTH      = 320   # camera capture width
-DEFAULT_CAP_HEIGHT     = 240   # camera capture height
-DEFAULT_PROC_SCALE     = 0.5   # down-scale frame to 50% before inference
-DEFAULT_SKIP_FRAMES    = 2     # run inference every 3rd frame
-DEFAULT_HALF_PRECISION = True  # try float16 on supported HW
-TARGET_LATENCY_MS      = 200   # soft budget per inference call (ms); user can tweak
+# These constants define the default optimization settings for best performance on Raspberry Pi 4.
+# You can change them here or override on the CLI.
+DEFAULT_CAP_WIDTH      = 320   # Camera capture width (pixels)
+DEFAULT_CAP_HEIGHT     = 240   # Camera capture height (pixels)
+DEFAULT_PROC_SCALE     = 0.5   # Fraction to downscale frames before inference (0.1-1.0)
+DEFAULT_SKIP_FRAMES    = 2     # Number of frames to skip between inferences
+DEFAULT_HALF_PRECISION = True  # Use float16 ("half precision") on supported hardware
+TARGET_LATENCY_MS      = 200   # Target latency (ms) per inference, for adaptive skipping
 
 # ---- Helper Functions ----
 
@@ -41,12 +41,10 @@ def parse_args():
     )
     parser.add_argument('--cam-idx', type=int, default=0,
                         help="Index of the webcam (default: 0)")
-    # Lower default capture resolution for Pi performance
     parser.add_argument('--width', type=int, default=DEFAULT_CAP_WIDTH,
                         help=f"Capture width (default: {DEFAULT_CAP_WIDTH})")
     parser.add_argument('--height', type=int, default=DEFAULT_CAP_HEIGHT,
                         help=f"Capture height (default: {DEFAULT_CAP_HEIGHT})")
-    # Lower default score_thr for better recall on smaller images
     parser.add_argument('--score-thr', type=float, default=0.6,
                         help="Score threshold for person detection (default: 0.6)")
     parser.add_argument('--draw-box', action='store_true',
@@ -60,11 +58,15 @@ def parse_args():
 
     # === Optimization options ===
     parser.add_argument('--proc-scale', type=float, default=DEFAULT_PROC_SCALE,
-                        help=f"Downscale factor for frame before inference (0.1-1.0, default: {DEFAULT_PROC_SCALE}).")
+                        help=f"Downscale factor for frame before inference (0.1-1.0, default: {DEFAULT_PROC_SCALE})")
     parser.add_argument('--skip-frames', type=int, default=DEFAULT_SKIP_FRAMES,
-                        help=f"Number of frames to skip between inferences (default: {DEFAULT_SKIP_FRAMES} = every {DEFAULT_SKIP_FRAMES+1}th frame runs inference).")
-    parser.add_argument('--half', action='store_true' if not DEFAULT_HALF_PRECISION else 'store_false',
-                        help=f"Try to run model and tensor in float16 (half precision) if supported. Default: {DEFAULT_HALF_PRECISION}")
+                        help=f"Number of frames to skip between inferences (default: {DEFAULT_SKIP_FRAMES} = every {DEFAULT_SKIP_FRAMES+1}th frame runs inference)")
+    # Provide both --half and --no-half flags for user override (default from constant)
+    half_group = parser.add_mutually_exclusive_group()
+    half_group.add_argument('--half', dest='half', action='store_true',
+                            help=f"Enable float16 (half precision) if supported (default: {'enabled' if DEFAULT_HALF_PRECISION else 'disabled'})")
+    half_group.add_argument('--no-half', dest='half', action='store_false',
+                            help=f"Disable float16 (half precision) (default: {'enabled' if DEFAULT_HALF_PRECISION else 'disabled'})")
     parser.set_defaults(half=DEFAULT_HALF_PRECISION)
     parser.add_argument('--target-latency-ms', type=int, default=TARGET_LATENCY_MS,
                         help=f"Soft latency budget per inference call in ms; adaptive frame skipping if not overridden (default: {TARGET_LATENCY_MS})")
@@ -323,7 +325,7 @@ def main():
                 if not user_override_skip and target_latency_ms > 0:
                     new_skip = max(0, int((inf_time * 1000) / target_latency_ms) - 1)
                     if new_skip != skip_frames:
-                        logging.info(f"Auto-adjust skip_frames {skip_frames} → {new_skip} to honour latency budget ({target_latency_ms} ms)")
+                        logging.info(f"Auto-adjust skip_frames {skip_frames} → {new_skip} to honor latency budget ({target_latency_ms} ms)")
                         skip_frames = new_skip
 
             # -- Rescale predictions to original frame coordinates if downscaled --
