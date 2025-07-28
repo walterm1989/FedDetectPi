@@ -31,12 +31,14 @@ def parse_args():
     )
     parser.add_argument('--cam-idx', type=int, default=0,
                         help="Index of the webcam (default: 0)")
-    parser.add_argument('--width', type=int, default=640,
-                        help="Capture width (default: 640)")
-    parser.add_argument('--height', type=int, default=480,
-                        help="Capture height (default: 480)")
-    parser.add_argument('--score-thr', type=float, default=0.7,
-                        help="Score threshold for person detection (default: 0.7)")
+    # Lower default capture resolution for Pi performance
+    parser.add_argument('--width', type=int, default=320,
+                        help="Capture width (default: 320)")
+    parser.add_argument('--height', type=int, default=240,
+                        help="Capture height (default: 240)")
+    # Lower default score_thr for better recall on smaller images
+    parser.add_argument('--score-thr', type=float, default=0.6,
+                        help="Score threshold for person detection (default: 0.6)")
     parser.add_argument('--draw-box', action='store_true',
                         help="Draw bounding boxes around detected persons")
     parser.add_argument('--log-file', type=str,
@@ -45,6 +47,15 @@ def parse_args():
                         help="Number of frames for FPS smoothing (default: 30)")
     parser.add_argument('--no-window', action='store_true',
                         help="Disable OpenCV window display (useful for headless runs)")
+
+    # === New optimization options ===
+    parser.add_argument('--proc-scale', type=float, default=1.0,
+                        help="Downscale factor for frame before inference (0.1-1.0, default: 1.0). Mutually exclusive with --proc-width/--proc-height.")
+    parser.add_argument('--skip-frames', type=int, default=0,
+                        help="Number of frames to skip between inferences (default: 0 = no skipping).")
+    parser.add_argument('--half', action='store_true',
+                        help="Try to run model and tensor in float16 (half precision) if supported.")
+    # Note: --proc-width/--proc-height not implemented for simplicity as per request.
     return parser.parse_args()
 
 def setup_logging(log_file=None):
@@ -178,11 +189,13 @@ def compute_fps(deque_times):
 def main():
     """
     Main function: initializes camera, model, and runs frame-by-frame inference loop.
+    Implements frame downscaling, frame skipping, and half-precision inference for optimized Raspberry Pi performance.
     """
     args = parse_args()
     setup_logging(args.log_file)
 
     logging.info(f"Starting webcam keypoint detection (camera idx={args.cam_idx}, res={args.width}x{args.height})")
+    logging.info(f"proc_scale={args.proc_scale} | skip_frames={args.skip_frames} | half_precision={'ON' if args.half else 'OFF'}")
 
     # Select device
     device = get_device()
@@ -190,12 +203,35 @@ def main():
     # Load model
     model = load_model(device)
 
+    # === Attempt to enable half-precision inference if requested ===
+    use_half = False
+    if args.half:
+        half_supported = False
+        if device.type == "cuda":
+            half_supported = True
+        elif hasattr(torch.backends, "cpu") and hasattr(torch.backends.cpu.matmul, "allow_fp16"):
+            half_supported = torch.backends.cpu.matmul.allow_fp16
+        if half_supported:
+            try:
+                model.half()
+                use_half = True
+                logging.info("Model set to half precision (float16).")
+            except Exception as e:
+                logging.warning(f"Failed to set model to half precision: {e}")
+        else:
+            logging.warning("--half requested but not supported on this device. Running in float32.")
+
+    # Validate proc_scale
+    if not (0.1 <= args.proc_scale <= 1.0):
+        logging.warning(f"Invalid --proc-scale: {args.proc_scale}, resetting to 1.0")
+        args.proc_scale = 1.0
+
     # Get skeleton edges and colors
     edges = get_keypoint_edges()
     kp_colors = get_keypoint_colors()
     edge_colors = get_keypoint_colors()  # Reuse for edges, cycle if needed
 
-    # Set up FPS smoothing
+    # Set up FPS smoothing (counts displayed frames, not just inference frames)
     frame_times = deque(maxlen=args.fps_window)
 
     # Open camera
@@ -209,6 +245,12 @@ def main():
 
     win_name = "Keypoint Detection (press 'q' to quit)"
 
+    # Frame skipping and prediction cache
+    skip_frames = max(0, args.skip_frames)
+    frame_counter = 0
+    last_preds = None
+    last_boxes, last_labels, last_scores, last_keypoints, last_person_indices = [], [], [], [], []
+
     try:
         while True:
             # 1. Capture frame
@@ -217,44 +259,78 @@ def main():
                 logging.warning("Failed to grab frame from camera.")
                 break
 
-            # 2. Preprocess: Convert BGR->RGB, to torch tensor, normalize [0,1]
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Use to_tensor for efficient conversion
+            orig_h, orig_w = frame.shape[:2]
+
+            # 2. Downscale workflow: compute scaled frame for inference
+            if args.proc_scale < 1.0:
+                scaled_w = max(1, int(orig_w * args.proc_scale))
+                scaled_h = max(1, int(orig_h * args.proc_scale))
+                scaled_frame = cv2.resize(frame, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+            else:
+                scaled_frame = frame.copy()
+                scaled_w, scaled_h = orig_w, orig_h
+
+            # 3. Preprocess: Convert BGR->RGB, to torch tensor, normalize [0,1]
+            rgb = cv2.cvtColor(scaled_frame, cv2.COLOR_BGR2RGB)
             input_tensor = F.to_tensor(rgb).to(device)
+            if use_half:
+                try:
+                    input_tensor = input_tensor.half()
+                except Exception as e:
+                    logging.warning(f"Failed to convert input tensor to half: {e}")
+                    input_tensor = input_tensor.float()
 
-            # 3. Inference (no grad, model expects [C,H,W] batched as [1,C,H,W])
-            t0 = time.perf_counter()
-            with torch.no_grad():
-                preds = model([input_tensor])[0]
-            t1 = time.perf_counter()
-            inf_time = t1 - t0
-            frame_times.append(inf_time)
+            # 4. Frame skipping workflow
+            need_infer = (frame_counter % (skip_frames + 1) == 0)
+            inf_time = 0.0
+            if need_infer or last_preds is None:
+                # --- Run model inference ---
+                t0 = time.perf_counter()
+                with torch.no_grad():
+                    preds = model([input_tensor])[0]
+                t1 = time.perf_counter()
+                inf_time = t1 - t0
+                last_preds = preds
+                # Parse predictions & cache for skipped frames
+                last_boxes = preds['boxes'].cpu().numpy() if len(preds['boxes']) > 0 else []
+                last_labels = preds['labels'].cpu().numpy() if len(preds['labels']) > 0 else []
+                last_scores = preds['scores'].cpu().numpy() if len(preds['scores']) > 0 else []
+                last_keypoints = preds['keypoints'].cpu().numpy() if len(preds['keypoints']) > 0 else []
+                last_person_indices = [
+                    i for i, (label, score) in enumerate(zip(last_labels, last_scores))
+                    if label == 1 and score >= args.score_thr
+                ]
+            # else: reuse last_preds and cached arrays
 
-            # 4. Parse predictions: keep only persons above score threshold
-            boxes = preds['boxes'].cpu().numpy() if len(preds['boxes']) > 0 else []
-            labels = preds['labels'].cpu().numpy() if len(preds['labels']) > 0 else []
-            scores = preds['scores'].cpu().numpy() if len(preds['scores']) > 0 else []
-            keypoints = preds['keypoints'].cpu().numpy() if len(preds['keypoints']) > 0 else []
+            # -- Rescale predictions to original frame coordinates if downscaled --
+            scale_x = orig_w / scaled_w
+            scale_y = orig_h / scaled_h
 
-            # Only keep detections with label==1 (person) and score >= threshold
-            person_indices = [
-                i for i, (label, score) in enumerate(zip(labels, scores))
-                if label == 1 and score >= args.score_thr
-            ]
-
-            # Draw all detected persons
-            for idx in person_indices:
-                kp = keypoints[idx]  # shape (17, 3)
+            # Draw all detected persons (use cached or fresh predictions)
+            for idx in last_person_indices:
+                kp = last_keypoints[idx]  # shape (17, 3)
+                kp_scaled = kp.copy()
+                kp_scaled[:, 0] *= scale_x
+                kp_scaled[:, 1] *= scale_y
                 draw_keypoints_and_skeleton(
-                    frame, kp, edges, kp_colors, edge_colors
+                    frame, kp_scaled, edges, kp_colors, edge_colors
                 )
                 if args.draw_box:
-                    # Draw bounding box if requested
-                    bbox = boxes[idx]
-                    draw_bounding_box(frame, bbox)
+                    # Draw bounding box if requested (rescale coords)
+                    bbox = last_boxes[idx]
+                    bbox_scaled = [
+                        bbox[0] * scale_x, bbox[1] * scale_y,
+                        bbox[2] * scale_x, bbox[3] * scale_y
+                    ]
+                    draw_bounding_box(frame, bbox_scaled)
 
-            # 5. Overlay FPS
-            fps = compute_fps(frame_times)
+            # 5. Overlay FPS (based on total displayed frames, not just inference calls)
+            t_display = time.perf_counter()
+            frame_times.append(t_display)
+            if len(frame_times) > 1:
+                fps = (len(frame_times) - 1) / (frame_times[-1] - frame_times[0] + 1e-8)
+            else:
+                fps = 0.0
             cv2.putText(
                 frame, f"FPS: {fps:.1f}",
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3, lineType=cv2.LINE_AA
@@ -263,6 +339,15 @@ def main():
                 frame, f"FPS: {fps:.1f}",
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 1, lineType=cv2.LINE_AA
             )
+            if skip_frames > 0:
+                cv2.putText(
+                    frame, f"(skip {skip_frames})", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2, lineType=cv2.LINE_AA
+                )
+                cv2.putText(
+                    frame, f"(skip {skip_frames})", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 1, lineType=cv2.LINE_AA
+                )
 
             # 6. Display frame (unless --no-window)
             if not args.no_window:
@@ -272,8 +357,12 @@ def main():
                     logging.info("Quit signal received ('q' pressed). Exiting.")
                     break
 
-            # 7. Log frame timing
-            logging.info(f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(person_indices)}")
+            # 7. Log timing and inference only when model was run
+            if need_infer or frame_counter == 0:
+                logging.info(
+                    f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(last_person_indices)}"
+                )
+            frame_counter += 1
 
     except KeyboardInterrupt:
         logging.info("Interrupted by user (Ctrl+C). Exiting.")
