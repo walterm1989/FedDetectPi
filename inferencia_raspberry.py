@@ -22,6 +22,19 @@ import torch
 import torchvision
 from torchvision.transforms import functional as F
 
+def cpu_supports_fp16_matmul():
+    """
+    Return True if current torch CPU backend advertises fp16 matmul support.
+    Safe on environments where torch.backends.cpu or matmul may be missing.
+    """
+    cpu_backend = getattr(torch.backends, "cpu", None)
+    if cpu_backend is None:
+        return False
+    matmul_backend = getattr(cpu_backend, "matmul", None)
+    if matmul_backend is None:
+        return False
+    return bool(getattr(matmul_backend, "allow_fp16", False))
+
 # ==== DEFAULT CONFIGURATION FOR RASPBERRY PI ====
 # These constants define the default optimization settings for best performance on Raspberry Pi 4.
 # You can change them here or override on the CLI.
@@ -223,8 +236,9 @@ def main():
         half_supported = False
         if device.type == "cuda":
             half_supported = True
-        elif hasattr(torch.backends, "cpu") and hasattr(torch.backends.cpu.matmul, "allow_fp16"):
-            half_supported = torch.backends.cpu.matmul.allow_fp16
+        elif device.type == "cpu":
+            half_supported = cpu_supports_fp16_matmul()
+        logging.info(f"CPU fp16 matmul support detected: {half_supported}")
         if half_supported:
             try:
                 model.half()
