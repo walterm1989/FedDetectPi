@@ -123,68 +123,76 @@ def dibujar_cajas(imagen, cajas, confidencias):
         cv2.putText(imagen, etiqueta, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
 
 def main():
+    # Definir el nombre de ventana como constante
+    WINDOW_NAME = "Detección de Personas - YOLOv4-tiny"
+
     # Cargar modelo y capas de salida
     red, capas_salida, nombres_clases = cargar_modelo()
 
     # Iniciar captura de cámara
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("ERROR: No se pudo abrir la cámara. Verifica que esté conectada y disponible.")
-        exit(1)
-    
+        print("ERROR: No se pudo acceder a la cámara. Verifica que esté conectada.")
+        return
+
+    # Crear la ventana de visualización UNA sola vez
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+
     print("Cámara iniciada. Comenzando detección de personas (120 segundos o pulsa 'q' para salir)...")
-    
+
     # Preparación de archivo CSV
     ruta_csv = os.path.join(os.path.dirname(__file__), ARCHIVO_CSV)
     existe_archivo = os.path.isfile(ruta_csv)
-    
+
     tiempo_inicio = time.time()
-    while True:
-        tiempo_ahora = time.time()
-        if tiempo_ahora - tiempo_inicio > 120:
-            print("Tiempo máximo alcanzado (120 segundos). Finalizando.")
-            break
 
-        ret, frame = cap.read()
-        if not ret:
-            print("ERROR: No se pudo leer un frame de la cámara.")
-            break
+    try:
+        while True:
+            tiempo_ahora = time.time()
+            if tiempo_ahora - tiempo_inicio > 120:
+                print("Tiempo máximo alcanzado (120 segundos). Finalizando.")
+                break
 
-        t0 = time.time()
-        alto, ancho = frame.shape[:2]
+            ret, frame = cap.read()
+            if not ret:
+                print("ERROR: No se pudo leer un frame de la cámara.")
+                break
 
-        # Preprocesamiento para DNN
-        blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
-        red.setInput(blob)
-        salidas = red.forward(capas_salida)
+            t0 = time.time()
+            alto, ancho = frame.shape[:2]
 
-        # Procesar detecciones
-        cajas, confidencias = procesar_detecciones(salidas, ancho, alto, nombres_clases)
+            # Preprocesamiento para DNN
+            blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
+            red.setInput(blob)
+            salidas = red.forward(capas_salida)
 
-        # Dibujar resultados en la imagen
-        dibujar_cajas(frame, cajas, confidencias)
+            # Procesar detecciones
+            cajas, confidencias = procesar_detecciones(salidas, ancho, alto, nombres_clases)
 
-        # Métricas
-        latencia_ms = int((time.time() - t0)*1000)
-        cpu_percent, ram_mb = medir_recursos()
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        guardar_csv(ruta_csv, [timestamp, latencia_ms, cpu_percent, ram_mb], existe_archivo)
-        existe_archivo = True  # Solo se escribe cabecera la primera vez
+            # Dibujar resultados en la imagen
+            dibujar_cajas(frame, cajas, confidencias)
 
-        # Mostrar frame
-        texto_metricas = f"Latencia: {latencia_ms} ms | CPU: {cpu_percent}% | RAM: {ram_mb} MB"
-        cv2.putText(frame, texto_metricas, (10, alto-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2, cv2.LINE_AA)
-        cv2.imshow('Detección de Personas - YOLOv4-tiny', frame)
-        
-        # Salir con 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            print("Finalización anticipada por el usuario.")
-            break
+            # Métricas
+            latencia_ms = int((time.time() - t0)*1000)
+            cpu_percent, ram_mb = medir_recursos()
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            guardar_csv(ruta_csv, [timestamp, latencia_ms, cpu_percent, ram_mb], existe_archivo)
+            existe_archivo = True  # Solo se escribe cabecera la primera vez
 
-    # Liberar recursos
-    cap.release()
-    cv2.destroyAllWindows()
-    print("Recursos liberados. ¡Hasta luego!")
+            # Mostrar frame
+            texto_metricas = f"Latencia: {latencia_ms} ms | CPU: {cpu_percent}% | RAM: {ram_mb} MB"
+            cv2.putText(frame, texto_metricas, (10, alto-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2, cv2.LINE_AA)
+            cv2.imshow(WINDOW_NAME, frame)
+
+            # Salir con 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("Finalización anticipada por el usuario.")
+                break
+    finally:
+        # Liberar recursos siempre, incluso si hay excepción
+        cap.release()
+        cv2.destroyAllWindows()
+        print("Recursos liberados. ¡Hasta luego!")
 
 if __name__ == '__main__':
     main()
