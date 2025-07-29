@@ -91,7 +91,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Monitor metrics for inferencia_raspberry.py (latency, FPS, CPU, RAM) and save to CSV."
     )
-    parser.add_argument('--duration', type=int, default=60, help="Duration to run (seconds, default=60)")
+    parser.add_argument('--duration', type=int, default=180, help="Duration to run (seconds, default=60)")
     parser.add_argument('--interval', type=float, default=2, help="Metrics sample interval (seconds, default=2)")
     parser.add_argument('--output', default="metricas_keypoints.csv", help="CSV file output path")
     # Parse known args, leave rest for inferencia_raspberry.py
