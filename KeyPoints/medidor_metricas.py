@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 # === CONFIGURACIÓN LOCAL (editar aquí si hace falta) ===
-DURATION_SEC      = 120        # duración total de la medición
+DURATION_SEC      = 240        # duración total de la medición
 SAMPLE_INTERVAL   = 2.0        # cada cuántos segundos se muestrea CPU/RAM
 SOURCE_NAME       = "webcam"   # etiqueta que irá al CSV y al nombre del archivo
 METHOD            = "KeyPoints-resnet50"  # cambia a 'KeyPoints-mobile' si usas MobileNet; puedes añadir sufijos '-TS' y/o '-half'
