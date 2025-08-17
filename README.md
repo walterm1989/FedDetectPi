@@ -21,3 +21,18 @@ python3 inferencia_raspberry.py --width 640 --height 480 --proc-scale 0.8 --skip
 To force or disable half-precision, use `--half` or `--no-half`.
 
 Tweak these parameters to balance detection quality and real-time speed, depending on your Raspberry Pi's performance and workload.
+
+---
+
+## KeyPoints
+
+Para ejecutar el medidor de métricas con los valores por defecto, usa:
+```
+python KeyPoints/medidor_metricas.py
+```
+
+Para cambiar duración, fuente o flags del hijo, edita el bloque CONFIG al inicio de `medidor_metricas.py`.
+
+Esto lanzará `inferencia_raspberry.py` como proceso hijo, recolectará métricas de inferencia, CPU y RAM, y guardará los resultados en un archivo CSV en `Metrics/raw/`.
+
+```
