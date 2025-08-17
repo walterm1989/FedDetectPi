@@ -153,6 +153,13 @@ def main():
               f"Por favor verifica que el archivo existe en la ruta indicada.", file=sys.stderr)
         return 1
 
+    # Warm-up psutil cpu_percent for child process
+    if HAS_PSUTIL:
+        try:
+            psutil.Process(proc.pid).cpu_percent(interval=None)
+        except Exception:
+            pass
+
     # Start resource sampler thread (after proc launched)
     sampler_thread = threading.Thread(
         target=resource_sampler,
@@ -189,9 +196,17 @@ def main():
                 persons_match = PERSONS_REGEX.search(line)
                 detections = int(persons_match.group(1)) if persons_match else ""
 
-                with metrics_lock:
-                    cpu_pct = latest_metrics.get('cpu_percent', 0.0)
-                    ram_mb = latest_metrics.get('ram_mb', 0.0)
+                # Synchronously fetch CPU/RAM for the child process right before writing
+                if HAS_PSUTIL:
+                    try:
+                        child_proc = psutil.Process(proc.pid)
+                        cpu_pct = child_proc.cpu_percent(interval=None)
+                        ram_mb = child_proc.memory_info().rss / (1024 * 1024)
+                    except Exception:
+                        cpu_pct, ram_mb = 0.0, 0.0
+                else:
+                    # Fallback for no psutil: use system load/mem
+                    cpu_pct, ram_mb = get_resource_metrics(proc.pid)
 
                 csvwriter.writerow([
                     timestamp, METHOD, SOURCE_NAME, frame_idx,
