@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import csv
 import datetime
 import os
@@ -10,6 +9,13 @@ import subprocess
 import signal
 import re
 from pathlib import Path
+
+# === CONFIGURACIÓN LOCAL (editar aquí si hace falta) ===
+DURATION_SEC      = 120        # duración total de la medición
+SAMPLE_INTERVAL   = 2.0        # cada cuántos segundos se muestrea CPU/RAM
+SOURCE_NAME       = "webcam"   # etiqueta que irá al CSV y al nombre del archivo
+METHOD            = "KeyPoints-resnet50"  # cambia a 'KeyPoints-mobile' si usas MobileNet; puedes añadir sufijos '-TS' y/o '-half'
+CHILD_FLAGS       = ["--draw-box"]  # flags opcionales para inferencia_raspberry.py; dejar [] si no quieres pasar ninguno
 
 # Try to import psutil if available
 try:
@@ -39,7 +45,6 @@ def get_resource_metrics(pid=None):
 
     # Fallback: get system loadavg (1min) and RAM usage from /proc/meminfo
     try:
-        # Loadavg: normalized to %CPU by dividing by os.cpu_count()
         load1, _, _ = os.getloadavg()
         cpu = 100.0 * load1 / (os.cpu_count() or 1)
     except Exception:
@@ -91,47 +96,19 @@ def terminate_process(proc, timeout=5):
         pass
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Monitor metrics for inferencia_raspberry.py (latency, FPS, CPU, RAM) and save to standardized CSV."
-    )
-    parser.add_argument('--duration', type=int, default=180, help="Duration to run (seconds, default=180)")
-    parser.add_argument('--interval', type=float, default=2, help="Metrics sample interval (seconds, default=2)")
-    parser.add_argument('--source', default="unknown", help="Source of video/camera/device name (used in CSV naming)")
-    # Parse known args, leave rest for inferencia_raspberry.py
-    args, extra = parser.parse_known_args()
+    # Set up child process command and working directory
+    script_dir = Path(__file__).resolve().parent
+    child_script = script_dir / "inferencia_raspberry.py"
+    child_cmd = [sys.executable, "-u", str(child_script)] + list(CHILD_FLAGS)
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
 
-    # Compose command for child process, pass through duration, interval, source as well
-    child_cmd = [
-        sys.executable, "-u", "inferencia_raspberry.py",
-        "--duration", str(args.duration),
-        "--interval", str(args.interval),
-        "--source", str(args.source)
-    ] + extra
-
-    # Build method string
-    def extract_model_type(extra_args):
-        # e.g. if args: ... --model yolov7 ...
-        if "--model" in extra_args:
-            idx = extra_args.index("--model")
-            if idx+1 < len(extra_args):
-                return extra_args[idx+1]
-        # fallback: check env
-        return os.environ.get("MODEL_TYPE", "unknown")
-
-    model_type = extract_model_type(extra)
-    method = f"KeyPoints-{model_type}"
-
-    # Add -TS and/or -half if present
-    if any(flag in extra for flag in ["--ts", "--TS"]):
-        method += "-TS"
-    if any(flag in extra for flag in ["--half", "-half"]):
-        method += "-half"
-
-    # Prepare CSV output path: Metrics/raw/YYYYmmdd_HHMMSS_<method>_<source>.csv
+    # Prepare CSV output path: Metrics/raw/YYYYmmdd_HHMMSS_<METHOD>_<SOURCE_NAME>.csv
     now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_method = re.sub(r'[^a-zA-Z0-9_-]', '', method)
-    safe_source = re.sub(r'[^a-zA-Z0-9_-]', '', args.source)
-    csv_dir = Path("Metrics/raw")
+    safe_method = re.sub(r'[^a-zA-Z0-9_-]', '', METHOD)
+    safe_source = re.sub(r'[^a-zA-Z0-9_-]', '', SOURCE_NAME)
+    repo_root = script_dir.parent
+    csv_dir = repo_root / "Metrics" / "raw"
     csv_dir.mkdir(parents=True, exist_ok=True)
     csv_path = csv_dir / f"{now_str}_{safe_method}_{safe_source}.csv"
 
@@ -161,21 +138,25 @@ def main():
     n_samples = 0
 
     # Start child process
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    proc = subprocess.Popen(
-        child_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-        universal_newlines=True,
-        env=env,
-    )
+    try:
+        proc = subprocess.Popen(
+            child_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
+            env=env,
+            cwd=str(script_dir),
+        )
+    except FileNotFoundError:
+        print(f"\n[ERROR] No se encontró el script hijo: {child_script.resolve()}\n"
+              f"Por favor verifica que el archivo existe en la ruta indicada.", file=sys.stderr)
+        return 1
 
     # Start resource sampler thread (after proc launched)
     sampler_thread = threading.Thread(
         target=resource_sampler,
-        args=(args.interval, stop_event, latest_metrics, metrics_lock, proc.pid),
+        args=(SAMPLE_INTERVAL, stop_event, latest_metrics, metrics_lock, proc.pid),
         daemon=True,
     )
     sampler_thread.start()
@@ -213,7 +194,7 @@ def main():
                     ram_mb = latest_metrics.get('ram_mb', 0.0)
 
                 csvwriter.writerow([
-                    timestamp, method, args.source, frame_idx,
+                    timestamp, METHOD, SOURCE_NAME, frame_idx,
                     latency_ms, fps_inst, cpu_pct, ram_mb, detections
                 ])
                 csvfile.flush()
@@ -224,7 +205,7 @@ def main():
                 n_samples += 1
                 frame_idx += 1
             # Check for time-based shutdown
-            if (time.time() - start_time) >= args.duration:
+            if (time.time() - start_time) >= DURATION_SEC:
                 shutdown_reason = "duration"
                 break
     except KeyboardInterrupt:

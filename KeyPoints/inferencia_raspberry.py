@@ -459,10 +459,11 @@ def main():
 
             # 7. Log timing and inference only when model was run
             if need_infer or frame_counter == 0:
+                # Ensure this line is always printed exactly as specified for metrics parsing:
+                # "Inference time: <ms> ms | FPS: <valor> | Persons: <n>"
                 logging.info(
                     f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(last_person_indices)}"
                 )
-                # Print parseable line to stdout as required
                 print(f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(last_person_indices)}")
             frame_counter += 1
 
