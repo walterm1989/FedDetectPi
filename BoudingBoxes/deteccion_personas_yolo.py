@@ -172,6 +172,8 @@ def main():
     print(f"Cámara iniciada. Comenzando detección de personas ({duration} segundos o pulsa 'q' para salir)...")
     tiempo_inicio = time.time()
     proc = psutil.Process()
+    # Warm-up psutil CPU percent to ensure accurate readings
+    proc.cpu_percent(interval=None)
     frame_idx = 0
 
     try:
