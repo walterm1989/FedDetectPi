@@ -462,6 +462,8 @@ def main():
                 logging.info(
                     f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(last_person_indices)}"
                 )
+                # Print parseable line to stdout as required
+                print(f"Inference time: {inf_time*1000:.1f} ms | FPS: {fps:.2f} | Persons: {len(last_person_indices)}")
             frame_counter += 1
 
     except KeyboardInterrupt:

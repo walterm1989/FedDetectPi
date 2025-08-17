@@ -20,13 +20,14 @@ import psutil
 import time
 import csv
 import os
+import argparse
 from datetime import datetime
 
 # Rutas de los archivos de modelo y clases
 RUTA_PESOS = 'yolov4-tiny.weights'
 RUTA_CFG = 'yolov4-tiny.cfg'
 RUTA_NOMBRES = 'coco.names'
-ARCHIVO_CSV = 'metricas_boundingboxes.csv'
+# ARCHIVO_CSV is deprecated in favor of standardized CSV path below
 
 # Parámetros de detección
 UMBRAL_CONFIDENCIA = 0.4
@@ -92,25 +93,29 @@ def procesar_detecciones(salidas, ancho, alto, nombres_clases):
         confidencias_filtradas.append(confidencias[i])
     return cajas_filtradas, confidencias_filtradas
 
-def medir_recursos():
+def medir_recursos(proc=None):
     """
-    Retorna el uso actual de CPU (%) y RAM (MB) usando psutil.
+    Retorna el uso actual de CPU (%) y RAM (MB) usando psutil.Process.
     """
-    cpu = psutil.cpu_percent(interval=None)
-    ram = psutil.virtual_memory().used / (1024*1024)
+    if proc is None:
+        proc = psutil.Process()
+    cpu = proc.cpu_percent(interval=None)
+    ram = proc.memory_info().rss / (1024 * 1024)
     return round(cpu, 1), round(ram, 1)
 
-def guardar_csv(ruta_csv, datos, existe_archivo):
+def guardar_csv(ruta_csv, datos, header):
     """
     Escribe una línea de métricas en el archivo CSV.
     Si el archivo no existe, escribe la cabecera.
+    Fuerza flush tras cada línea.
     """
-    escribir_cabecera = not existe_archivo
+    archivo_existe = os.path.isfile(ruta_csv)
     with open(ruta_csv, 'a', newline='') as f:
         escritor = csv.writer(f)
-        if escribir_cabecera:
-            escritor.writerow(['timestamp', 'latencia_ms', 'cpu_percent', 'ram_mb'])
+        if not archivo_existe:
+            escritor.writerow(header)
         escritor.writerow(datos)
+        f.flush()
 
 def dibujar_cajas(imagen, cajas, confidencias):
     """
@@ -123,6 +128,32 @@ def dibujar_cajas(imagen, cajas, confidencias):
         cv2.putText(imagen, etiqueta, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
 
 def main():
+    parser = argparse.ArgumentParser(description="Detección de personas con YOLOv4-tiny y métricas estandarizadas a CSV.")
+    parser.add_argument('--duration', type=int, default=120, help='Duración máxima en segundos (default 120)')
+    parser.add_argument('--source', type=str, default='webcam', help="Fuente de video (default 'webcam')")
+    args = parser.parse_args()
+
+    duration = args.duration
+    source = args.source
+
+    # Parámetros CSV/Metrics
+    method = 'BBoxes-YOLOv4tiny'
+    ts_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    csv_dir = os.path.join('Metrics', 'raw')
+    os.makedirs(csv_dir, exist_ok=True)
+    csv_name = f"{ts_str}_{method}_{source}.csv"
+    ruta_csv = os.path.join(csv_dir, csv_name)
+    header = [
+        'timestamp',
+        'method',
+        'source',
+        'frame_idx',
+        'latency_ms',
+        'fps_inst',
+        'cpu_pct',
+        'ram_mb',
+        'detections',
+    ]
     # Definir el nombre de ventana como constante
     WINDOW_NAME = "Detección de Personas - YOLOv4-tiny"
 
@@ -138,19 +169,16 @@ def main():
     # Crear la ventana de visualización UNA sola vez
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
-    print("Cámara iniciada. Comenzando detección de personas (120 segundos o pulsa 'q' para salir)...")
-
-    # Preparación de archivo CSV
-    ruta_csv = os.path.join(os.path.dirname(__file__), ARCHIVO_CSV)
-    existe_archivo = os.path.isfile(ruta_csv)
-
+    print(f"Cámara iniciada. Comenzando detección de personas ({duration} segundos o pulsa 'q' para salir)...")
     tiempo_inicio = time.time()
+    proc = psutil.Process()
+    frame_idx = 0
 
     try:
         while True:
             tiempo_ahora = time.time()
-            if tiempo_ahora - tiempo_inicio > 120:
-                print("Tiempo máximo alcanzado (120 segundos). Finalizando.")
+            if tiempo_ahora - tiempo_inicio > duration:
+                print(f"Tiempo máximo alcanzado ({duration} segundos). Finalizando.")
                 break
 
             ret, frame = cap.read()
@@ -158,7 +186,7 @@ def main():
                 print("ERROR: No se pudo leer un frame de la cámara.")
                 break
 
-            t0 = time.time()
+            t0 = time.perf_counter()
             alto, ancho = frame.shape[:2]
 
             # Preprocesamiento para DNN
@@ -173,14 +201,30 @@ def main():
             dibujar_cajas(frame, cajas, confidencias)
 
             # Métricas
-            latencia_ms = int((time.time() - t0)*1000)
-            cpu_percent, ram_mb = medir_recursos()
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            guardar_csv(ruta_csv, [timestamp, latencia_ms, cpu_percent, ram_mb], existe_archivo)
-            existe_archivo = True  # Solo se escribe cabecera la primera vez
+            t1 = time.perf_counter()
+            latencia_ms = (t1 - t0) * 1000
+            fps_inst = 1000.0 / latencia_ms if latencia_ms > 0 else 0.0
+            cpu_pct, ram_mb = medir_recursos(proc)
+            timestamp = datetime.now().isoformat(timespec='milliseconds')
+            detections = len(cajas)
+
+            # CSV registro
+            fila = [
+                timestamp,
+                method,
+                source,
+                frame_idx,
+                round(latencia_ms, 2),
+                round(fps_inst, 2),
+                cpu_pct,
+                ram_mb,
+                detections,
+            ]
+            guardar_csv(ruta_csv, fila, header)
+            frame_idx += 1
 
             # Mostrar frame
-            texto_metricas = f"Latencia: {latencia_ms} ms | CPU: {cpu_percent}% | RAM: {ram_mb} MB"
+            texto_metricas = f"Latencia: {int(latencia_ms)} ms | FPS: {fps_inst:.1f} | CPU: {cpu_pct}% | RAM: {ram_mb} MB | Det: {detections}"
             cv2.putText(frame, texto_metricas, (10, alto-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2, cv2.LINE_AA)
             cv2.imshow(WINDOW_NAME, frame)
 
