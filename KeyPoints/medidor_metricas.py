@@ -9,6 +9,7 @@ import time
 import subprocess
 import signal
 import re
+from pathlib import Path
 
 # Try to import psutil if available
 try:
@@ -17,8 +18,10 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-# Regex for extracting inference time
+# Regex for extracting inference time, FPS and Persons (detections)
 INFERENCE_REGEX = re.compile(r"Inference time:\s*([0-9.]+)\s*ms", re.IGNORECASE)
+FPS_REGEX = re.compile(r"FPS:\s*([0-9.]+)", re.IGNORECASE)
+PERSONS_REGEX = re.compile(r"Persons:\s*([0-9]+)", re.IGNORECASE)
 
 def get_resource_metrics(pid=None):
     """
@@ -89,23 +92,55 @@ def terminate_process(proc, timeout=5):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Monitor metrics for inferencia_raspberry.py (latency, FPS, CPU, RAM) and save to CSV."
+        description="Monitor metrics for inferencia_raspberry.py (latency, FPS, CPU, RAM) and save to standardized CSV."
     )
-    parser.add_argument('--duration', type=int, default=180, help="Duration to run (seconds, default=60)")
+    parser.add_argument('--duration', type=int, default=180, help="Duration to run (seconds, default=180)")
     parser.add_argument('--interval', type=float, default=2, help="Metrics sample interval (seconds, default=2)")
-    parser.add_argument('--output', default="metricas_keypoints.csv", help="CSV file output path")
+    parser.add_argument('--source', default="unknown", help="Source of video/camera/device name (used in CSV naming)")
     # Parse known args, leave rest for inferencia_raspberry.py
     args, extra = parser.parse_known_args()
 
-    # Compose command for child process
+    # Compose command for child process, pass through duration, interval, source as well
     child_cmd = [
-        sys.executable, "-u", "inferencia_raspberry.py"
+        sys.executable, "-u", "inferencia_raspberry.py",
+        "--duration", str(args.duration),
+        "--interval", str(args.interval),
+        "--source", str(args.source)
     ] + extra
 
-    # Prepare CSV file
-    csv_columns = ["timestamp", "latency_ms", "fps", "cpu_percent", "ram_mb"]
+    # Build method string
+    def extract_model_type(extra_args):
+        # e.g. if args: ... --model yolov7 ...
+        if "--model" in extra_args:
+            idx = extra_args.index("--model")
+            if idx+1 < len(extra_args):
+                return extra_args[idx+1]
+        # fallback: check env
+        return os.environ.get("MODEL_TYPE", "unknown")
+
+    model_type = extract_model_type(extra)
+    method = f"KeyPoints-{model_type}"
+
+    # Add -TS and/or -half if present
+    if any(flag in extra for flag in ["--ts", "--TS"]):
+        method += "-TS"
+    if any(flag in extra for flag in ["--half", "-half"]):
+        method += "-half"
+
+    # Prepare CSV output path: Metrics/raw/YYYYmmdd_HHMMSS_<method>_<source>.csv
+    now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_method = re.sub(r'[^a-zA-Z0-9_-]', '', method)
+    safe_source = re.sub(r'[^a-zA-Z0-9_-]', '', args.source)
+    csv_dir = Path("Metrics/raw")
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = csv_dir / f"{now_str}_{safe_method}_{safe_source}.csv"
+
+    csv_columns = [
+        "timestamp", "method", "source", "frame_idx",
+        "latency_ms", "fps_inst", "cpu_pct", "ram_mb", "detections"
+    ]
     try:
-        csvfile = open(args.output, "w", newline="")
+        csvfile = open(csv_path, "w", newline="")
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(csv_columns)
         csvfile.flush()
@@ -147,28 +182,47 @@ def main():
 
     start_time = time.time()
     shutdown_reason = None
+    frame_idx = 0
 
     try:
         for line in proc.stdout:
             print(line, end="")  # Forward to our own stdout
-            now = datetime.datetime.now().isoformat()
-            match = INFERENCE_REGEX.search(line)
-            if match:
+            timestamp = datetime.datetime.now().isoformat()
+            inf_match = INFERENCE_REGEX.search(line)
+            if inf_match:
                 try:
-                    latency_ms = float(match.group(1))
-                    fps = 1000.0 / latency_ms if latency_ms > 0 else 0.0
-                    with metrics_lock:
-                        cpu_percent = latest_metrics.get('cpu_percent', 0.0)
-                        ram_mb = latest_metrics.get('ram_mb', 0.0)
-                    csvwriter.writerow([now, latency_ms, fps, cpu_percent, ram_mb])
-                    csvfile.flush()
-                    latencies.append(latency_ms)
-                    fpses.append(fps)
-                    cpu_usages.append(cpu_percent)
-                    ram_usages.append(ram_mb)
-                    n_samples += 1
+                    latency_ms = float(inf_match.group(1))
                 except Exception:
-                    pass
+                    latency_ms = None
+                # Try to get FPS from output, else compute
+                fps_match = FPS_REGEX.search(line)
+                if fps_match:
+                    try:
+                        fps_inst = float(fps_match.group(1))
+                    except Exception:
+                        fps_inst = 1000.0 / latency_ms if latency_ms and latency_ms > 0 else 0.0
+                else:
+                    fps_inst = 1000.0 / latency_ms if latency_ms and latency_ms > 0 else 0.0
+
+                # Try to get detections/persons from output
+                persons_match = PERSONS_REGEX.search(line)
+                detections = int(persons_match.group(1)) if persons_match else ""
+
+                with metrics_lock:
+                    cpu_pct = latest_metrics.get('cpu_percent', 0.0)
+                    ram_mb = latest_metrics.get('ram_mb', 0.0)
+
+                csvwriter.writerow([
+                    timestamp, method, args.source, frame_idx,
+                    latency_ms, fps_inst, cpu_pct, ram_mb, detections
+                ])
+                csvfile.flush()
+                latencies.append(latency_ms if latency_ms is not None else 0.0)
+                fpses.append(fps_inst)
+                cpu_usages.append(cpu_pct)
+                ram_usages.append(ram_mb)
+                n_samples += 1
+                frame_idx += 1
             # Check for time-based shutdown
             if (time.time() - start_time) >= args.duration:
                 shutdown_reason = "duration"
