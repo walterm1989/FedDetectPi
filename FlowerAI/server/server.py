@@ -4,12 +4,12 @@ import torch
 import logging
 
 # --- Server configuration ---
-SERVER_ADDRESS = "[::]:8080"
-ROUNDS = 10
-MIN_FIT = 2
-MIN_EVAL = 2
-MIN_AVAILABLE = 2
-CHECKPOINT_DIR = "checkpoints"
+SERVER_ADDRESS = "0.0.0.0:8080"
+ROUNDS = 3
+MIN_FIT = 1
+MIN_EVAL = 1
+MIN_AVAILABLE = 1
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints")
 
 # Setup logging
 logging.basicConfig(
@@ -31,7 +31,7 @@ class MyStrategy(fl.server.strategy.FedAvg):
             weights = fl.common.parameters_to_ndarrays(parameters)
             # Save as PyTorch tensor list
             ensure_checkpoint_dir()
-            save_path = os.path.join(CHECKPOINT_DIR, f"global_weights_round_{server_round}.pt")
+            save_path = os.path.join(CHECKPOINT_DIR, f"global_round_{server_round}.pt")
             torch.save(weights, save_path)
             logging.info(f"Saved global weights to {save_path} at end of round {server_round}.")
         else:
