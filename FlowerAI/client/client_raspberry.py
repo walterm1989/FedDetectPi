@@ -1,9 +1,13 @@
+import sys
 import os
 import torch
 import numpy as np
 import flwr as fl
 
-from model_def import build_model, set_parameters, get_parameters
+# Add utils directory to sys.path for relative imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+
+from model_def import build_model, get_parameters, set_parameters
 from dataset_utils import get_dataloaders
 
 # Set constants
@@ -43,7 +47,7 @@ class RaspberryClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         print("[CLIENT] fit called")
         set_parameters(self.model, parameters)
-        train_loader, _, _ = get_dataloaders(
+        train_loader, val_loader = get_dataloaders(
             DATA_PATH, batch_size=BATCH_SIZE, num_workers=0
         )
         self.model.train()
@@ -74,7 +78,7 @@ class RaspberryClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         print("[CLIENT] evaluate called")
         set_parameters(self.model, parameters)
-        _, val_loader, _ = get_dataloaders(
+        train_loader, val_loader = get_dataloaders(
             DATA_PATH, batch_size=BATCH_SIZE, num_workers=0
         )
         self.model.eval()
