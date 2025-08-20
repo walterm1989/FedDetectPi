@@ -1,62 +1,36 @@
-# ========================== CONFIG ==========================
-CONFIG = {
-    # List of directories (relative to this script) to search for YOLO files
-    "SEARCH_YOLO_PATHS": [
-        "../yolo",
-        "../../yolo",
-        "../models/yolo",
-        "../../models/yolo",
-        "./yolo",
-        ".",
-    ],
-
-    # YOLO files (relative to search paths)
-    "YOLO_CFG_FILE": "yolov4-tiny.cfg",
-    "YOLO_WEIGHTS_FILE": "yolov4-tiny.weights",
-    "YOLO_NAMES_FILE": "coco.names",
-
-    # Webcam settings
-    "CAM_INDEX": 0,
-    "CAM_WIDTH": 640,
-    "CAM_HEIGHT": 480,
-
-    # Processing
-    "CONF_THRESH": 0.3,
-    "NMS_THRESH": 0.4,
-    "FRAME_SKIP": 3,          # Only process every Nth frame
-    "WARMUP_FRAMES": 15,      # Number of frames to "warm up" camera
-
-    # Output
-    "OUT_DIR_PERSON": "autolabel_out/person",
-    "OUT_DIR_NO_PERSON": "autolabel_out/no_person",
-    "OUTPUT_SIZE": (224, 224),
-    "SAVE_EVERY_N": 2,        # Save every Nth processed frame
-
-    # Runtime
-    "SHOW_WINDOW": True,
-    "TIME": 60,               # Seconds to run main loop
-}
-# ======================== END CONFIG ========================
+# === CONFIG (editar aquí) ===
+CAM_INDEX        = 0          # índice de cámara
+CAPTURE_SIZE     = (320, 240) # resolución de captura (w, h) para RPi
+DURATION_SEC     = 300        # tiempo máx de muestreo
+FRAME_SKIP       = 2          # saltar N frames entre detecciones (reduce carga)
+SAVE_EVERY_N     = 1          # guardar 1 de cada N frames evaluados
+CONF_THRESH      = 0.40       # umbral de confianza para 'person'
+NMS_THRESH       = 0.30       # NMS
+OUTPUT_SIZE      = (224, 224) # tamaño de guardado (w, h)
+SHOW_WINDOW      = True       # False para headless
+SEARCH_YOLO_PATHS = [
+    "BoudingBoxes", "BoundingBoxes", ".", "FlowerAI/utils"
+] # rutas relativas donde buscar cfg/weights/names
+CFG_NAME   = "yolov4-tiny.cfg"
+WEIGHTS    = "yolov4-tiny.weights"
+NAMES_FILE = "coco.names"
+OUT_DIR_PERSON    = "FlowerAI/data/person"
+OUT_DIR_NO_PERSON = "FlowerAI/data/no_person"
+# === FIN CONFIG ===
 
 import os
 import sys
 import cv2
 import time
-import threading
 from datetime import datetime
 
 # -------------- Utility: Find YOLO files --------------
 def find_yolo_files():
-    paths = CONFIG["SEARCH_YOLO_PATHS"]
-    cfg = CONFIG["YOLO_CFG_FILE"]
-    weights = CONFIG["YOLO_WEIGHTS_FILE"]
-    names = CONFIG["YOLO_NAMES_FILE"]
-
     found = {"cfg": None, "weights": None, "names": None}
-    for base in paths:
-        c = os.path.join(base, cfg)
-        w = os.path.join(base, weights)
-        n = os.path.join(base, names)
+    for base in SEARCH_YOLO_PATHS:
+        c = os.path.join(base, CFG_NAME)
+        w = os.path.join(base, WEIGHTS)
+        n = os.path.join(base, NAMES_FILE)
         if found["cfg"] is None and os.path.isfile(c):
             found["cfg"] = c
         if found["weights"] is None and os.path.isfile(w):
@@ -76,26 +50,22 @@ def print_wget_commands(missing):
     }
     for key, url in baseurls.items():
         if missing[key] is None:
-            fname = CONFIG[f"YOLO_{key.upper()}_FILE"]
+            fname = {"cfg": CFG_NAME, "weights": WEIGHTS, "names": NAMES_FILE}[key]
             print(f"wget -O {fname} {url}")
     print("\nPlace the downloaded files in one of the following folders:")
-    for p in CONFIG["SEARCH_YOLO_PATHS"]:
+    for p in SEARCH_YOLO_PATHS:
         print(f"  {os.path.abspath(p)}")
     print()
-# -------------------------------------------------------
 
-# -------------- Utility: Create Output Dirs ------------
 def ensure_dir(d):
     if not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
 
-# -------------- Utility: Timestamp ---------------------
-def unique_filename(label, seq):
-    now = datetime.now()
-    tstamp = now.strftime("%Y%m%d_%H%M%S_%f")
-    return f"{label}_{tstamp}_seq{seq}.jpg"
+def unique_filename(label, seq, dt):
+    # dt: datetime object
+    tstamp = dt.strftime("%Y%m%d_%H%M%S_%f")[:-3] # %f gives microseconds, keep only milliseconds
+    return f"{label}/{tstamp}_{seq:04d}.jpg"
 
-# -------------- Main Script ----------------------------
 def main():
     yolo_files = find_yolo_files()
     missing = {k: v for k, v in yolo_files.items() if v is None}
@@ -108,7 +78,6 @@ def main():
     with open(yolo_files["names"], "r") as f:
         class_names = [line.strip() for line in f.readlines()]
 
-    # Check that "person" is present as class id 0
     if len(class_names) == 0 or class_names[0].lower() != "person":
         print("ERROR: COCO class 0 is not 'person'. Check your names file.")
         sys.exit(1)
@@ -122,36 +91,30 @@ def main():
         print(f"ERROR: Failed to load YOLOv4-tiny: {e}")
         sys.exit(1)
 
-    # Get output layer names
     out_layers = net.getUnconnectedOutLayersNames()
 
-    # Prepare output dirs
-    out_dir_person = CONFIG["OUT_DIR_PERSON"]
-    out_dir_no_person = CONFIG["OUT_DIR_NO_PERSON"]
-    ensure_dir(out_dir_person)
-    ensure_dir(out_dir_no_person)
+    ensure_dir(OUT_DIR_PERSON)
+    ensure_dir(OUT_DIR_NO_PERSON)
 
-    # Open webcam
-    cap = cv2.VideoCapture(CONFIG["CAM_INDEX"])
+    cap = cv2.VideoCapture(CAM_INDEX)
     if not cap.isOpened():
-        print(f"ERROR: Could not open webcam at index {CONFIG['CAM_INDEX']}")
+        print(f"ERROR: Could not open webcam at index {CAM_INDEX}")
         sys.exit(1)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG["CAM_WIDTH"])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG["CAM_HEIGHT"])
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_SIZE[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_SIZE[1])
 
-    # Warm up camera
-    print(f"Warming up camera for {CONFIG['WARMUP_FRAMES']} frames...")
-    for _ in range(CONFIG['WARMUP_FRAMES']):
+    # Warm up camera (skip a few frames)
+    print(f"Warming up camera...")
+    for _ in range(10):
         ret, _ = cap.read()
         if not ret:
             print("ERROR: Failed to read from webcam during warmup.")
             cap.release()
             sys.exit(1)
-        time.sleep(0.02)  # Small delay
+        time.sleep(0.02)
 
     print("Starting auto-labeling. Press 'q' to quit early.")
-    start_time = time.time()
-    elapsed = 0
+    start_time = time.perf_counter()
     processed = 0
     saved = 0
     saved_person = 0
@@ -159,20 +122,12 @@ def main():
     frame_idx = 0
     seq = 0
 
-    show_win = CONFIG["SHOW_WINDOW"]
-    save_every = CONFIG["SAVE_EVERY_N"]
-    output_size = CONFIG["OUTPUT_SIZE"]
-    conf_thresh = CONFIG["CONF_THRESH"]
-    nms_thresh = CONFIG["NMS_THRESH"]
-    frame_skip = CONFIG["FRAME_SKIP"]
-    max_time = CONFIG["TIME"]
-
     try:
         while True:
-            now = time.time()
+            now = time.perf_counter()
             elapsed = now - start_time
-            if elapsed > max_time:
-                print(f"\nTime limit of {max_time}s reached.")
+            if elapsed > DURATION_SEC:
+                print(f"\nTime limit of {DURATION_SEC}s reached.")
                 break
 
             ret, frame = cap.read()
@@ -180,7 +135,7 @@ def main():
                 print("WARNING: Failed to read frame. Skipping.")
                 continue
             frame_idx += 1
-            if frame_idx % frame_skip != 0:
+            if frame_idx % FRAME_SKIP != 0:
                 continue
 
             # Prepare input blob
@@ -188,19 +143,16 @@ def main():
             net.setInput(blob)
             outs = net.forward(out_layers)
 
-            # Gather detections
             frame_h, frame_w = frame.shape[:2]
             boxes = []
             confidences = []
-            class_ids = []
 
             for out in outs:
                 for det in out:
                     scores = det[5:]
                     class_id = int(scores.argmax())
                     conf = scores[class_id]
-                    if class_id == 0 and conf > conf_thresh:
-                        # Person detected
+                    if class_id == 0 and conf > CONF_THRESH:
                         center_x = int(det[0] * frame_w)
                         center_y = int(det[1] * frame_h)
                         w = int(det[2] * frame_w)
@@ -209,9 +161,7 @@ def main():
                         y = int(center_y - h/2)
                         boxes.append([x, y, w, h])
                         confidences.append(float(conf))
-                        class_ids.append(class_id)
-            # Apply NMS
-            indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_thresh, nms_thresh)
+            indices = cv2.dnn.NMSBoxes(boxes, confidences, CONF_THRESH, NMS_THRESH)
             person_detections = []
             if len(indices) > 0:
                 for i in indices.flatten():
@@ -221,13 +171,15 @@ def main():
             processed += 1
 
             # Save frame if required
-            if processed % save_every == 0:
+            if processed % SAVE_EVERY_N == 0:
                 seq += 1
-                out_dir = out_dir_person if label == "person" else out_dir_no_person
+                out_dir = OUT_DIR_PERSON if label == "person" else OUT_DIR_NO_PERSON
                 ensure_dir(out_dir)
-                fname = unique_filename(label, seq)
-                out_path = os.path.join(out_dir, fname)
-                to_save = cv2.resize(frame, output_size)
+                dt = datetime.now()
+                # Save as per required pattern: person/YYYYmmdd_HHMMSS_mmm_<seq>.jpg
+                fname = unique_filename(label, seq, dt)
+                out_path = os.path.join(out_dir, os.path.basename(fname))
+                to_save = cv2.resize(frame, OUTPUT_SIZE)
                 cv2.imwrite(out_path, to_save, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
                 saved += 1
                 if label == "person":
@@ -236,16 +188,15 @@ def main():
                     saved_no_person += 1
 
             # Show window
-            if show_win:
+            if SHOW_WINDOW:
                 disp = frame.copy()
-                # Draw detections
                 for (x, y, w, h) in person_detections:
                     cv2.rectangle(disp, (x, y), (x+w, y+h), (0,255,0), 2)
                     cv2.putText(disp, "person", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
                 cv2.putText(disp, f"Labeled: {label}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255) if label=="no_person" else (0,255,0), 2)
                 cv2.putText(disp, f"Processed: {processed}", (10,60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
                 cv2.putText(disp, f"Saved: {saved} (person: {saved_person}, no_person: {saved_no_person})", (10,90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,0), 2)
-                cv2.putText(disp, f"Time: {int(elapsed)}s / {max_time}s", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+                cv2.putText(disp, f"Time: {int(elapsed)}s / {DURATION_SEC}s", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
                 cv2.imshow("YOLOv4-tiny AutoLabel", disp)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
@@ -256,9 +207,8 @@ def main():
         print("\nInterrupted by user. Exiting...")
     finally:
         cap.release()
-        if show_win:
+        if SHOW_WINDOW:
             cv2.destroyAllWindows()
-        # Print summary
         print("\n======= Auto-Labeling Run Complete =======")
         print(f"Total frames processed: {processed}")
         print(f"Total frames saved: {saved}")
