@@ -42,7 +42,7 @@ def main():
     logging.info("Starting Flower server at %s for %d rounds.", SERVER_ADDRESS, ROUNDS)
     strategy = MyStrategy(
         min_fit_clients=MIN_FIT,
-        min_eval_clients=MIN_EVAL,
+        min_evaluate_clients=MIN_EVAL,
         min_available_clients=MIN_AVAILABLE,
     )
     fl.server.start_server(
