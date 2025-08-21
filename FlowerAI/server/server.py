@@ -40,11 +40,18 @@ class MyStrategy(fl.server.strategy.FedAvg):
 
 def main():
     logging.info("Starting Flower server at %s for %d rounds.", SERVER_ADDRESS, ROUNDS)
-    strategy = MyStrategy(
-        min_fit_clients=MIN_FIT,
-        min_eval_clients=MIN_EVAL,
-        min_available_clients=MIN_AVAILABLE,
-    )
+    from inspect import signature
+
+sig = signature(fl.server.strategy.FedAvg.__init__)
+base_kwargs = {
+    'min_fit_clients': MIN_FIT,
+    'min_available_clients': MIN_AVAILABLE,
+}
+if 'min_evaluate_clients' in sig.parameters:
+    base_kwargs['min_evaluate_clients'] = MIN_EVAL
+else:
+    base_kwargs['min_eval_clients'] = MIN_EVAL
+strategy = MyStrategy(**base_kwargs)
     fl.server.start_server(
         server_address=SERVER_ADDRESS,
         config=fl.server.ServerConfig(num_rounds=ROUNDS),
