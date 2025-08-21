@@ -4,6 +4,7 @@ import time
 import torch
 import numpy as np
 import cv2
+
 import argparse
 
 def get_args():
@@ -29,18 +30,33 @@ def find_checkpoint(ckpt_dir):
 def main():
     args = get_args()
 
-    # Import model utils
+    # Import model_def from utils
     utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
-    sys.path.append(utils_dir)
-    from model_utils import build_model  # assuming utils/model_utils.py
+    if utils_dir not in sys.path:
+        sys.path.append(utils_dir)
+    try:
+        from model_def import build_model, load_ckpt  # assuming utils/model_def.py
+    except ImportError as e:
+        print(f"ImportError: {e}. Make sure model_def.py exists in FlowerAI/utils.")
+        return
 
     # Load model
     ckpt_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints")
-    ckpt_path = find_checkpoint(ckpt_dir)
-    model = build_model()
-    model.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
-    model.eval()
+    try:
+        ckpt_path = find_checkpoint(ckpt_dir)
+    except Exception as e:
+        print(f"Checkpoint not found: {e}")
+        return
+
+    model = build_model(num_classes=2)
+    try:
+        load_ckpt(model, ckpt_path)
+        print(f"Loaded checkpoint from {ckpt_path}")
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        return
     model.to("cpu")
+    model.eval()
 
     # Set up webcam
     cap = cv2.VideoCapture(0)
@@ -76,21 +92,22 @@ def main():
         # Inference
         t0 = time.time()
         with torch.no_grad():
-            logits = model(img_tensor)
-            probs = torch.nn.functional.softmax(logits, dim=1)
-            label = torch.argmax(probs, dim=1).item()
+            logits = model(img_tensor.to("cpu"))
+            probs = torch.nn.functional.softmax(logits, dim=1).cpu().numpy()[0]
+            person_prob = probs[1] if probs.shape[0] > 1 else 0.0
+            persons = 1 if person_prob >= 0.5 else 0
         t1 = time.time()
 
         latency_ms = (t1 - t0) * 1000
         fps = 1.0 / (t1 - t0 + 1e-8)
 
-        print(f"Inference time: {latency_ms:.2f} ms | FPS: {fps:.2f} | Persons: {label}", flush=True)
+        print(f"Inference time: {latency_ms:.2f} ms | FPS: {fps:.2f} | Persons: {persons}", flush=True)
 
         if not args.no_window:
             # Draw label on frame and show
             disp_img = cv2.cvtColor(img_tensor.squeeze(0).numpy().transpose(1, 2, 0) * std + mean, cv2.COLOR_RGB2BGR)
             disp_img = (disp_img * 255).clip(0, 255).astype(np.uint8)
-            cv2.putText(disp_img, f"Persons: {label}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+            cv2.putText(disp_img, f"Persons: {persons}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
             cv2.imshow("Webcam Inference", disp_img)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
