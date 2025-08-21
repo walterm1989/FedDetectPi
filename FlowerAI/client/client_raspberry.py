@@ -7,13 +7,13 @@ import flwr as fl
 # Add utils directory to sys.path for relative imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
-from model_def import build_model, get_parameters, set_parameters
+from model_def import build_model, get_parameters, set_parameters, save_ckpt, load_ckpt
 from dataset_utils import get_dataloaders
 
 # Set constants
 NUM_CLASSES = 2
 BATCH_SIZE = 32
-LOCAL_EPOCHS = 1
+LOCAL_EPOCHS = 2
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "latest_global.pt")
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -29,8 +29,11 @@ def load_model():
     model.to(DEVICE)
     if os.path.exists(CHECKPOINT_PATH):
         print(f"[INFO] Loading weights from {CHECKPOINT_PATH}")
-        state_dict = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-        model.load_state_dict(state_dict)
+        success = load_ckpt(model, CHECKPOINT_PATH, map_location=DEVICE)
+        if success:
+            print("[INFO] Model weights loaded successfully.")
+        else:
+            print("[WARN] Failed to load model weights, training from scratch.")
     else:
         print("[INFO] No checkpoint found, training from scratch.")
     return model
@@ -70,8 +73,11 @@ class RaspberryClient(fl.client.NumPyClient):
 
         # Save latest global parameters after training
         os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
-        torch.save(self.model.state_dict(), CHECKPOINT_PATH)
-        print(f"[CLIENT] Saved model checkpoint to {CHECKPOINT_PATH}")
+        success = save_ckpt(self.model, CHECKPOINT_PATH)
+        if success:
+            print(f"[CLIENT] Saved model checkpoint to {CHECKPOINT_PATH}")
+        else:
+            print(f"[CLIENT] Failed to save model checkpoint to {CHECKPOINT_PATH}")
 
         return get_parameters(self.model), num_examples, {}
 
