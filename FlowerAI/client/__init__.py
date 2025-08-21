@@ -1,0 +1,1 @@
+"""FlowerAI client components (RPi)."""
