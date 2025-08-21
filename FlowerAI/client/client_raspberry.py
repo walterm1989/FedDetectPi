@@ -1,7 +1,7 @@
 import flwr as fl
 import numpy as np
 import torch
-from FlowerAI.utils.model_def import build_model, save_ckpt, load_ckpt
+from FlowerAI.utils import build_model, get_parameters, set_parameters, save_ckpt, load_ckpt, get_dataloaders
 
 class FlowerClient(fl.client.NumPyClient):
     def __init__(self):
