@@ -21,3 +21,23 @@ python3 inferencia_raspberry.py --width 640 --height 480 --proc-scale 0.8 --skip
 To force or disable half-precision, use `--half` or `--no-half`.
 
 Tweak these parameters to balance detection quality and real-time speed, depending on your Raspberry Pi's performance and workload.
+
+---
+
+## Flower AI (federado)
+
+### Commands:
+- **Start server:**  
+  `python FlowerAI/server/server.py`
+- **Start Raspberry client:**  
+  `python FlowerAI/client/client_raspberry.py`
+- **Start inference + metrics measurement:**  
+  `python FlowerAI/client/medidor_federado.py`
+
+### Data:
+- Datasets located in `FlowerAI/data/person` and `FlowerAI/data/no_person`
+- Checkpoints saved to `FlowerAI/checkpoints/`
+
+### Inference & Metrics:
+- `cam_inference` outputs inference logs
+- `medidor_federado` writes CSV to `Metrics/raw/`
