@@ -21,3 +21,39 @@ python3 inferencia_raspberry.py --width 640 --height 480 --proc-scale 0.8 --skip
 To force or disable half-precision, use `--half` or `--no-half`.
 
 Tweak these parameters to balance detection quality and real-time speed, depending on your Raspberry Pi's performance and workload.
+
+---
+
+## Flower AI (federado)
+
+Este proyecto utiliza Flower AI para entrenamiento federado distribuido entre Raspberry Pi y servidor portátil.
+
+### Cómo iniciar el servidor
+
+```bash
+python -m FlowerAI.server
+```
+
+### Cómo iniciar el cliente en Raspberry Pi
+
+```bash
+export FLOWER_SERVER_ADDR=&lt;IP:PORT&gt;
+python -m FlowerAI.client.rpi
+```
+Reemplaza <IP:PORT> por la dirección y puerto del servidor (por ejemplo: 192.168.1.10:8080).
+
+### Cómo ejecutar el medidor federado
+
+```bash
+python -m FlowerAI.client.medidor_federado
+```
+
+### Directorio de datos y checkpoints
+
+- Los datos de entrenamiento y validación deben ubicarse en: `FlowerAI/data/{person,no_person}`
+- Los checkpoints de los modelos federados se guardan en: `FlowerAI/checkpoints/`
+
+### Métricas y formato de datos
+
+- El script `Metrics/plot_metrics.py` admite métricas parseables en formato de línea y estándar CSV. 
+- Asegúrate de que los resultados generados sean compatibles con el formato esperado por este script para graficar y analizar las métricas.
