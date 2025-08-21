@@ -1,45 +1,50 @@
-import torch
+"""
+Dataset utilities for FlowerAI.
+"""
+
 from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms
+from torchvision import transforms, datasets
+import torch
 
-# ImageNet normalization statistics
-IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD = [0.229, 0.224, 0.225]
-
-# Define the transform pipeline as specified
-transform = transforms.Compose([
-    transforms.Resize(224),          # Resize shorter edge to 224
-    transforms.CenterCrop(224),      # Center crop to 224x224
-    transforms.ToTensor(),           # Convert PIL image to tensor
-    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
-])
-
-def get_dataloaders(data_root, batch_size=32, val_split=0.2, num_workers=0):
+def get_dataloaders(
+    data_root: str,
+    batch_size: int = 32,
+    val_split: float = 0.2,
+    num_workers: int = 0
+):
     """
-    Loads an ImageFolder dataset from `data_root`, splits it into training and validation sets,
-    and returns corresponding DataLoaders.
-
+    Create train and validation dataloaders from an ImageFolder directory.
     Args:
-        data_root (str): Path to the root directory containing image folders.
-        batch_size (int): Batch size for the DataLoaders.
-        val_split (float): Fraction of the dataset to use as validation.
-        num_workers (int): Number of subprocesses to use for data loading.
-
+        data_root (str): Path to data directory with subfolders per class.
+        batch_size (int): Batch size for loaders.
+        val_split (float): Fraction of data for validation (rest for train).
+        num_workers (int): DataLoader workers.
     Returns:
-        train_loader (DataLoader): DataLoader for the training split.
-        val_loader (DataLoader): DataLoader for the validation split.
+        (train_loader, val_loader, class_names)
     """
-    # Ensure reproducibility
+
+    # Standard ImageNet normalization
+    normalize = transforms.Normalize(
+        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    )
+
+    transform = transforms.Compose([
+        transforms.Resize(224),  # Resize shorter side to 224
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize
+    ])
+
+    dataset = datasets.ImageFolder(data_root, transform=transform)
+    num_total = len(dataset)
+    num_val = int(val_split * num_total)
+    num_train = num_total - num_val
+
+    # Fixed split for reproducibility
     generator = torch.Generator().manual_seed(42)
-
-    dataset = datasets.ImageFolder(root=data_root, transform=transform)
-    n_total = len(dataset)
-    n_val = int(val_split * n_total)
-    n_train = n_total - n_val
-
-    train_dataset, val_dataset = random_split(dataset, [n_train, n_val], generator=generator)
+    train_dataset, val_dataset = random_split(dataset, [num_train, num_val], generator=generator)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    return train_loader, val_loader
+    return train_loader, val_loader, dataset.classes

@@ -1,55 +1,59 @@
-import inspect
-import os
-import flwr as fl
-from flwr.server.strategy import FedAvg
-import torch
-from FlowerAI.utils import build_model, save_ckpt
-import flwr.common
+"""
+FlowerAI Server main module.
+"""
 
-class MyStrategy(FedAvg):
+import os
+from typing import Optional, List, Tuple, Dict, Any
+import flwr as fl
+import numpy as np
+
+from FlowerAI.utils.model_def import build_model, set_parameters, save_ckpt
+import torch
+
+CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoints")
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+class MyStrategy(fl.server.strategy.FedAvg):
     def __init__(self, **kwargs):
-        # Handle possible parameter name difference: min_evaluate_clients vs min_eval_clients
-        sig = inspect.signature(FedAvg.__init__)
-        params = sig.parameters
-        if "min_evaluate_clients" in params:
-            if "min_eval_clients" in kwargs:
-                kwargs["min_evaluate_clients"] = kwargs.pop("min_eval_clients")
-        elif "min_eval_clients" in params:
-            if "min_evaluate_clients" in kwargs:
-                kwargs["min_eval_clients"] = kwargs.pop("min_evaluate_clients")
+        # Handle both min_evaluate_clients (old) and min_eval_clients (new)
+        if "min_eval_clients" in kwargs:
+            kwargs["min_evaluate_clients"] = kwargs.pop("min_eval_clients")
         super().__init__(**kwargs)
 
-    def aggregate_fit(self, rnd, results, failures):
-        agg_result = super().aggregate_fit(rnd, results, failures)
-        if agg_result is None:
-            return None
-        parameters, metrics = agg_result
-
-        # Convert parameters to ndarrays
-        ndarrays = flwr.common.parameters_to_ndarrays(parameters)
-
-        # Build the model
-        model = build_model(num_classes=2, freeze_backbone=False)
-        state_dict = model.state_dict()
-        # Map ndarrays to state_dict keys, allow strict=False
-        for k, w in zip(state_dict.keys(), ndarrays):
-            state_dict[k] = torch.tensor(w)
-        model.load_state_dict(state_dict, strict=False)
-
-        # Ensure checkpoints directory exists
-        ckpt_dir = os.path.join("FlowerAI", "checkpoints")
-        os.makedirs(ckpt_dir, exist_ok=True)
-        ckpt_path = os.path.join(ckpt_dir, f"global_round_{rnd}.pt")
-        save_ckpt(model, ckpt_path)
-
-        return parameters, metrics
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        failures: List[BaseException],
+    ) -> Optional[fl.common.Parameters]:
+        aggregated_parameters = super().aggregate_fit(server_round, results, failures)
+        if aggregated_parameters is not None:
+            # Convert parameters to ndarrays
+            ndarrays = fl.common.parameters_to_ndarrays(aggregated_parameters)
+            # Rebuild model and load parameters
+            model = build_model(num_classes=2, freeze_backbone=False)
+            set_parameters(model, ndarrays)
+            # Save checkpoint
+            ckpt_path = os.path.join(CHECKPOINT_DIR, f"global_round_{server_round}.pt")
+            save_ckpt(model, ckpt_path)
+        return aggregated_parameters
 
 def main():
-    strategy = MyStrategy()
+    """
+    Main function for starting the FlowerAI server.
+    """
+    strategy = MyStrategy(
+        min_fit_clients=2,
+        min_evaluate_clients=2,
+        min_available_clients=2,
+        on_fit_config_fn=None,
+        on_evaluate_config_fn=None,
+    )
+    print("Starting Flower server on 0.0.0.0:8080 with 3 rounds...")
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        strategy=strategy,
         config=fl.server.ServerConfig(num_rounds=3),
+        strategy=strategy,
     )
 
 if __name__ == "__main__":
