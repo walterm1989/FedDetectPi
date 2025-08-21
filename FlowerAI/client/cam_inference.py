@@ -3,7 +3,7 @@ import time
 import cv2
 import torch
 import numpy as np
-from FlowerAI.utils.model_def import build_model, load_ckpt
+from FlowerAI.utils import build_model, load_ckpt
 import os
 
 def find_checkpoint(ckpt_dir="FlowerAI/checkpoints"):
