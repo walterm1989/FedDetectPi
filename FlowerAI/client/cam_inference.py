@@ -4,18 +4,32 @@ import cv2
 import torch
 import numpy as np
 from FlowerAI.utils.model_def import build_model, load_ckpt
+import os
+
+def find_checkpoint(ckpt_dir="FlowerAI/checkpoints"):
+    """Find the latest checkpoint in the directory."""
+    if not os.path.isdir(ckpt_dir):
+        return None
+    files = [f for f in os.listdir(ckpt_dir) if f.endswith(".pth") or f.endswith(".pt")]
+    if not files:
+        return None
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(ckpt_dir, x)), reverse=True)
+    return os.path.join(ckpt_dir, files[0])
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
     parser.add_argument("--no-window", action="store_true", help="Disable GUI window")
     args = parser.parse_args()
 
     device = "cpu"
     model = build_model(num_classes=2, freeze_backbone=False)
-    ok = load_ckpt(model, args.ckpt, map_location=device)
+    ckpt_path = find_checkpoint()
+    if not ckpt_path:
+        print("No checkpoint found in FlowerAI/checkpoints.", flush=True)
+        exit(1)
+    ok = load_ckpt(model, ckpt_path, map_location=device)
     if not ok:
-        print(f"Failed to load checkpoint from {args.ckpt}.", flush=True)
+        print(f"Failed to load checkpoint from {ckpt_path}.", flush=True)
         exit(1)
     model.to(device)
     model.eval()
