@@ -13,13 +13,13 @@ class PassiveClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         print(f"[FlowerAI][RPi] Fit -> params: {len(parameters)} | sin entrenamiento local")
-        # No entrenamos nada; devolvemos lo recibido y 0 ejemplos
-        return parameters, 0, {}
+        # No entrenamos nada; devolvemos lo recibido y 1 ejemplo para evitar división por cero
+        return parameters, 1, {}
 
     def evaluate(self, parameters, config):
         print("[FlowerAI][RPi] Evaluate -> sin datos locales")
-        # Sin datos: loss=0.0 y 0 ejemplos
-        return 0.0, 0, {}
+        # Sin datos: loss=0.0 y 1 ejemplo para evitar división por cero
+        return 0.0, 1, {}
 
 
 def main() -> None:
