@@ -82,16 +82,6 @@ Para instalar las dependencias necesarias para el cliente en Raspberry Pi:
 pip install -r requirements.txt
 ```
 
-### Métricas automáticas (CPU/RAM) en RPi
-
-El cliente registra CPU (%) y RAM (MB) cada 1 s durante 60 s en `Metrics/flower_rpi_metrics_YYYYMMDD_HHMMSS.csv`.
-
-Variables opcionales:
-- `METRICS_SECONDS` (por defecto `60`)
-- `METRICS_INTERVAL` (por defecto `1.0`)
-- `METRICS_DIR` (por defecto `Metrics`)
-- `METRICS_CSV` (ruta completa si quieres nombrar el archivo manualmente)
-
 ### Pasos en la Raspberry Pi (64-bit)
 ```bash
 git clone <tu-repo>
@@ -106,6 +96,24 @@ export FLOWER_SERVER_ADDRESS=192.168.1.50:8080
 # Ejecutar cliente
 python -m FlowerAI.client.raspberry_client
 ```
+
+### Métricas automáticas (CPU/RAM) en RPi
+
+El cliente registra CPU (%) y RAM (MB) cada 1 s durante 60 s en `Metrics/flower_rpi_metrics_YYYYMMDD_HHMMSS.csv`.
+
+Variables opcionales:
+- `METRICS_SECONDS` (por defecto `60`)
+- `METRICS_INTERVAL` (por defecto `1.0`)
+- `METRICS_DIR` (por defecto `Metrics`)
+- `METRICS_CSV` (ruta completa si quieres nombrar el archivo manualmente)
+
+Cómo obtener la IP del portátil:
+- Windows: ipconfig → “IPv4 Address”.
+- Linux/Mac: ip addr o ifconfig.
+
+Con el servidor activo, deberías ver logs tipo:
+- En el servidor: “Requesting initial parameters from one random client”
+- En la Raspberry: “[FlowerAI][RPi] Conectando…”, “Fit…”, “Evaluate…”
 
 Cómo obtener la IP del portátil:
 - Windows: ipconfig → “IPv4 Address”.
