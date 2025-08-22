@@ -73,3 +73,28 @@ python -m FlowerAI.server
 Variables opcionales:
 - FLOWER_SERVER_ADDRESS (por defecto 0.0.0.0:8080)
 - FLOWER_NUM_ROUNDS (por defecto 3)
+
+## Cliente Raspberry
+
+### Pasos en la Raspberry Pi (64-bit)
+```bash
+git clone <tu-repo>
+cd <tu-repo>
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Establecer la IP del portátil y puerto del servidor (ej.: 192.168.1.50:8080)
+export FLOWER_SERVER_ADDRESS=192.168.1.50:8080
+
+# Ejecutar cliente
+python -m FlowerAI.client.raspberry_client
+```
+
+Cómo obtener la IP del portátil:
+- Windows: ipconfig → “IPv4 Address”.
+- Linux/Mac: ip addr o ifconfig.
+
+Con el servidor activo, deberías ver logs tipo:
+- En el servidor: “Requesting initial parameters from one random client”
+- En la Raspberry: “[FlowerAI][RPi] Conectando…”, “Fit…”, “Evaluate…”
