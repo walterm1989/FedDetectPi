@@ -76,6 +76,22 @@ Variables opcionales:
 
 ## Cliente Raspberry
 
+Para instalar las dependencias necesarias para el cliente en Raspberry Pi:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Métricas automáticas (CPU/RAM) en RPi
+
+Para habilitar la recolección automática de métricas de CPU y RAM en Raspberry Pi usando `psutil`, asegúrate de tener instalada la librería:
+
+```bash
+pip install psutil
+```
+
+El cliente ya está configurado para enviar estas métricas automáticamente si detecta que está corriendo en una Raspberry Pi.
+
 ### Pasos en la Raspberry Pi (64-bit)
 ```bash
 git clone <tu-repo>

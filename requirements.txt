@@ -1,3 +1,4 @@
 flwr>=1.6,<2
 psutil>=5.9
 psutil>=5.9
+psutil>=5.9
