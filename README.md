@@ -57,3 +57,19 @@ python -m FlowerAI.client.medidor_federado
 
 - El script `Metrics/plot_metrics.py` admite métricas parseables en formato de línea y estándar CSV. 
 - Asegúrate de que los resultados generados sean compatibles con el formato esperado por este script para graficar y analizar las métricas.
+
+# FlowerAI Server
+
+## Setup (portátil)
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# Linux/Mac:
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m FlowerAI.server
+```
+
+Variables opcionales:
+- FLOWER_SERVER_ADDRESS (por defecto 0.0.0.0:8080)
+- FLOWER_NUM_ROUNDS (por defecto 3)
