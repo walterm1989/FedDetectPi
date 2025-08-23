@@ -150,3 +150,33 @@ Variables opcionales:
 - `METRICS_INTERVAL` (por defecto `1.0`)
 - `METRICS_DIR` (por defecto `Metrics`)
 - `METRICS_CSV` (ruta completa si quieres nombrar el archivo manualmente)
+
+## FlowerAI — Cliente RPi con cámara y métricas (60s)
+
+### Servidor (portátil)
+```bash
+# PowerShell
+$env:FLOWER_NUM_ROUNDS=10000
+$env:FLOWER_MIN_FIT_CLIENTS=1
+$env:FLOWER_MIN_EVALUATE_CLIENTS=1
+$env:FLOWER_MIN_AVAILABLE_CLIENTS=1
+python -m FlowerAI.server.main
+```
+
+Cliente (Raspberry)
+source .venv/bin/activate
+pip install -r requirements.txt
+
+export FLOWER_SERVER_ADDRESS=IP_DEL_PORTATIL:8080
+export METRICS_SECONDS=60
+export METRICS_INTERVAL=1.0
+export CAM_INDEX=0
+export CAM_W=640
+export CAM_H=480
+export CAM_FPS=30
+export SHOW=0   # 1 para ver ventana
+
+python -m FlowerAI.client.raspberry_client
+
+El CSV se guarda en Metrics/flower_rpi_metrics_YYYYMMDD_HHMMSS.csv con columnas:
+timestamp_iso, elapsed_s, cpu_percent, rss_mb, fit_calls, eval_calls, cam_fps, cam_det.
