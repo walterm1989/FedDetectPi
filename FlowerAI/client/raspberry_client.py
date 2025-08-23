@@ -31,6 +31,14 @@ CAM_H = int(os.getenv("CAM_H", "480"))
 CAM_FPS_TARGET = int(os.getenv("CAM_FPS", "30"))
 SHOW = os.getenv("SHOW", "0") == "1"
 
+# Parámetros de HOG (ajustables por entorno)
+HOG_HIT_THRESHOLD = float(os.getenv("HOG_HIT_THRESHOLD", "0.0"))
+HOG_WIN_STRIDE = tuple(map(int, os.getenv("HOG_WIN_STRIDE", "8,8").split(",")))
+HOG_PADDING = tuple(map(int, os.getenv("HOG_PADDING", "8,8").split(",")))
+HOG_SCALE = float(os.getenv("HOG_SCALE", "1.05"))
+HOG_FINAL_THRESHOLD = float(os.getenv("HOG_FINAL_THRESHOLD", "2.0"))
+HOG_UPSCALE = float(os.getenv("HOG_UPSCALE", "1.0"))  # 1.0 = sin upsample
+
 # Contadores federados
 FIT_CALLS = 0
 EVAL_CALLS = 0
@@ -78,7 +86,26 @@ def _camera_worker(stop_event: threading.Event) -> None:
             ok, frame = cap.read()
             if not ok:
                 continue
-            rects, _ = hog.detectMultiScale(frame, winStride=(8,8), padding=(8,8), scale=1.05)
+
+            # Procesamiento de upscaling si corresponde
+            frame_proc = frame
+            if HOG_UPSCALE != 1.0:
+                frame_proc = cv2.resize(
+                    frame,
+                    None,
+                    fx=HOG_UPSCALE,
+                    fy=HOG_UPSCALE,
+                    interpolation=cv2.INTER_LINEAR
+                )
+
+            rects, _ = hog.detectMultiScale(
+                frame_proc,
+                hitThreshold=HOG_HIT_THRESHOLD,
+                winStride=HOG_WIN_STRIDE,
+                padding=HOG_PADDING,
+                scale=HOG_SCALE,
+                finalThreshold=HOG_FINAL_THRESHOLD,
+            )
             det_n = len(rects)
             frames += 1
 
@@ -93,9 +120,9 @@ def _camera_worker(stop_event: threading.Event) -> None:
                 frames = 0
 
             if SHOW:
-                for (x,y,w,h) in rects:
-                    cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
-                cv2.imshow("FlowerAI Camera (q para salir)", frame)
+                for (x, y, w, h) in rects:
+                    cv2.rectangle(frame_proc, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.imshow("FlowerAI Camera (q para salir)", frame_proc)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     stop_event.set()
                     break
