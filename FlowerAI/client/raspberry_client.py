@@ -66,7 +66,9 @@ class PassiveClient(fl.client.NumPyClient):
 
 def _camera_worker(stop_event: threading.Event) -> None:
     """Captura cámara y ejecuta HOG+SVM, actualizando fps/detecciones por segundo."""
-    cap = cv2.VideoCapture(CAM_INDEX)
+    cap = cv2.VideoCapture(CAM_INDEX, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(CAM_INDEX)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_W)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
     cap.set(cv2.CAP_PROP_FPS, CAM_FPS_TARGET)
@@ -80,12 +82,27 @@ def _camera_worker(stop_event: threading.Event) -> None:
     last = time.time()
     frames = 0
     det_n = 0
+    fail = 0  # Contador de fallos consecutivos
 
     try:
         while not stop_event.is_set():
             ok, frame = cap.read()
             if not ok:
+                fail += 1
+                if fail >= 30:
+                    cap.release()
+                    time.sleep(0.1)
+                    cap = cv2.VideoCapture(CAM_INDEX, cv2.CAP_V4L2)
+                    if not cap.isOpened():
+                        cap = cv2.VideoCapture(CAM_INDEX)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_W)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
+                    cap.set(cv2.CAP_PROP_FPS, CAM_FPS_TARGET)
+                    fail = 0
+                time.sleep(0.02)
                 continue
+            else:
+                fail = 0
 
             # Procesamiento de upscaling si corresponde
             frame_proc = frame
