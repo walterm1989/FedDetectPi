@@ -150,3 +150,28 @@ Variables opcionales:
 - `METRICS_INTERVAL` (por defecto `1.0`)
 - `METRICS_DIR` (por defecto `Metrics`)
 - `METRICS_CSV` (ruta completa si quieres nombrar el archivo manualmente)
+
+```
+
+## Bounding Boxes (RPi) con OpenCV HOG
+
+### Ejecución (RPi)
+```bash
+cd BoudingBoxes
+python webcam_bb.py
+
+Variables útiles:
+- METRICS_SECONDS (por defecto 60)
+- METRICS_INTERVAL (por defecto 1.0)
+- METRICS_CSV (ruta del CSV; por defecto Metrics/bb_rpi_metrics_*.csv)
+- CAM_INDEX (por defecto 0), CAM_W/CAM_H/CAM_FPS
+- SHOW=1 para visualizar ventana (si hay entorno gráfico)
+```
+
+Rama principal y commit
+```bash
+git checkout -B main && git pull --rebase
+git add .
+git commit -m "feat(bb-rpi): webcam HOG person detector + FPS/CPU/RAM CSV"
+git push -u origin main
+```
