@@ -1,5 +1,60 @@
 import argparse
 import os
+import sys
+import glob
+import re
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
+from collections import defaultdict
+from matplotlib.ticker import MaxNLocator
+
+def normalize_columns(df):
+    # Renombres para FlowerAI → columnas estándar del analizador
+    rename_map = {
+        'timestamp_iso': 'timestamp',
+        'elapsed_s': 'elapsed_sec',
+        'cpu_percent': 'cpu_pct',
+        'rss_mb': 'ram_mb',
+        'cam_fps': 'fps_inst',   # usamos cam_fps como fps_inst
+        'cam_det': 'detections', # opcional, por consistencia
+    }
+    to_rename = {k: v for k, v in rename_map.items() if k in df.columns}
+    if to_rename:
+        df = df.rename(columns=to_rename)
+
+    # Si falta fps_inst pero hay latency_ms, lo calculamos
+    if ('fps_inst' not in df.columns or df['fps_inst'].isnull().all()) and 'latency_ms' in df.columns and not df['latency_ms'].isnull().all():
+        df['fps_inst'] = 1000.0 / df['latency_ms']
+
+    # Si falta latency_ms pero hay fps_inst, lo calculamos
+    if ('latency_ms' not in df.columns or df['latency_ms'].isnull().all()) and 'fps_inst' in df.columns and not df['fps_inst'].isnull().all():
+        safe_fps = df['fps_inst'].replace([0, np.inf, -np.inf], np.nan)
+        df['latency_ms'] = 1000.0 / safe_fps
+
+    # Asegura elapsed_sec si hay timestamp
+    if ('elapsed_sec' not in df.columns or df['elapsed_sec'].isnull().all()) and 'timestamp' in df.columns:
+        times = pd.to_datetime(df['timestamp'], errors='coerce')
+        if times.notna().any():
+            df['elapsed_sec'] = (times - times.min()).dt.total_seconds()
+
+    return df
+
+def infer_method_from_filename(f):
+    base = os.path.basename(f).lower()
+    if 'keypoint' in base:
+        return 'KeyPoints'
+    elif 'bbox' in base:
+        return 'BBoxes'
+    elif 'flower' in base:
+        return 'FlowerAI'
+    else:
+        return os.path.splitext(os.path.basename(f))[0]
+
+# METRICS = [
+#     'elapsed_sec', 'fps_inst', 'latency_ms', 'cpu_pct', 'ram_mb', 'detections'
+# ]
 import glob
 import pandas as pd
 import numpy as np
@@ -85,13 +140,16 @@ def load_all_data(raw_path, methods_filter=None, sources_filter=None):
     for f in files:
         try:
             df = pd.read_csv(f)
-            # Infer method from column or filename
+
+            # Normalize headers and derive missing metrics (especialmente FlowerAI)
+            df = normalize_columns(df)
+
+            # Method and source (clean)
             if 'method' not in df.columns:
-                method_name = os.path.splitext(os.path.basename(f))[0]
-                df['method'] = method_name
-            # Infer source from filename or column if present
+                df['method'] = infer_method_from_filename(f)
             if 'source' not in df.columns:
                 df['source'] = os.path.basename(f)
+
             df = fill_missing_columns(df)
             df = compute_elapsed_sec(df)
             df = check_cpu_pct(df)
