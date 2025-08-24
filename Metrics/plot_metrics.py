@@ -354,9 +354,25 @@ def plot_histogram(df, metric, graphs_dir):
     plt.legend(title='Method')
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
+    plt.xscale("log")  # Enhancement 1: Use logarithmic x-axis for combined histogram
     out_path = os.path.join(graphs_dir, f"hist_{metric}.png")
     plt.savefig(out_path)
     plt.close()
+
+    # Enhancement 2: Individual histograms per method with log x-axis
+    for method, group in df.groupby('method'):
+        vals = group[metric].dropna().values
+        plt.figure(figsize=(8, 6))
+        plt.hist(vals, bins=bins, alpha=0.6, histtype='stepfilled', edgecolor='black')
+        plt.xscale("log")
+        plt.xlabel(metric.replace('_', ' ').capitalize())
+        plt.ylabel('Count')
+        plt.title(f"Histogram of {metric.replace('_', ' ').capitalize()} - {method}")
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        out_path = os.path.join(graphs_dir, f"hist_{metric}_{method}.png")
+        plt.savefig(out_path)
+        plt.close()
 
 def plot_boxplot(df, metric, graphs_dir):
     plt.figure(figsize=(8, 6))
