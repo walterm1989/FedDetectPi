@@ -130,8 +130,6 @@ def infer_method_from_filename(path):
     return fname.rsplit('.', 1)[0]
 
 # --- User-specified functions (inserted verbatim) ---
-import numpy as np
-import pandas as pd
 
 def normalize_columns(df):
     # Renombres para FlowerAI → columnas estándar del analizador
@@ -170,7 +168,7 @@ def normalize_columns(df):
 def infer_method_from_filename(f):
     base = os.path.basename(f).lower()
     if 'keypoint' in base:
-        return 'KeyPoints'
+        return 'Keypoints'
     elif 'bbox' in base:
         return 'BBoxes'
     elif 'flower' in base:
