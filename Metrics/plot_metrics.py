@@ -79,6 +79,8 @@ def parse_args():
                         help="Comma-separated list of methods to include (optional)")
     parser.add_argument('--sources', type=str, default=None,
                         help="Comma-separated list of sources to include (optional)")
+    parser.add_argument('--include-vs-time', action='store_true',
+                        help='Si se pasa, también genera gráficos *_vs_time.png (timestamp absoluto)')
     return parser.parse_args()
 
 def get_csv_files(raw_path):
@@ -417,9 +419,10 @@ def main():
 
     df, file_info = load_all_data(raw_path, methods_filter, sources_filter)
 
-    # Always plot *_vs_time.png for compatibility
-    for metric in METRICS:
-        plot_time_series_vs_time(df, metric, graphs_dir)
+    # Plot *_vs_time.png only if requested
+    if args.include_vs_time:
+        for metric in METRICS:
+            plot_time_series_vs_time(df, metric, graphs_dir)
 
     # Plot time series with selected x_mode
     for metric in METRICS:
