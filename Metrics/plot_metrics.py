@@ -91,15 +91,50 @@ def get_csv_files(raw_path):
         files.update(glob.glob(pattern))
     return sorted(files)
 
+def normalize_columns(df):
+    """
+    Normalize DataFrame column headers and derive missing metrics if possible.
+    This is especially useful for FlowerAI CSVs which may have non-standard headers.
+    """
+    # Example normalization: lowercase, strip, replace spaces with underscores
+    df.columns = [c.lower().strip().replace(' ', '_') for c in df.columns]
+    # FlowerAI-specific remapping
+    mapping = {
+        'total_accuracy': 'accuracy',
+        'acc': 'accuracy',
+        'elapsed': 'elapsed_sec',
+        'duration': 'elapsed_sec',
+        'cpu': 'cpu_pct',
+        'ram': 'ram_pct',
+        # Add more mappings as needed
+    }
+    df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
+    # Derive accuracy if not present but can be computed
+    if 'correct' in df.columns and 'total' in df.columns and 'accuracy' not in df.columns:
+        with pd.option_context('mode.use_inf_as_na', True):
+            df['accuracy'] = df['correct'] / df['total']
+    return df
+
+def infer_method_from_filename(path):
+    """
+    Infer the 'method' name from a filename or path.
+    Typical use: if filename is 'results_gpt4.csv', returns 'gpt4'
+    """
+    fname = os.path.basename(path)
+    for delim in ['_', '-', '.']:
+        parts = fname.split(delim)
+        for part in parts:
+            if part.lower() in ['gpt3', 'gpt4', 'flowerai', 'openai', 'llama', 'mistral', 'gemini']:
+                return part
+    # fallback: strip extension and return last part
+    return fname.rsplit('.', 1)[0]
+
 def fill_missing_columns(df):
-    # Ensure all metrics columns exist, fill with NaN if missing
-    for col in METRICS:
+    # Fill missing columns with NaN for compatibility
+    cols = ['accuracy', 'throughput', 'latency', 'elapsed_sec', 'cpu_pct', 'ram_pct']
+    for col in cols:
         if col not in df.columns:
-            df[col] = np.nan
-    # Compute fps_inst if missing, from latency_ms if possible
-    if 'fps_inst' not in df.columns or df['fps_inst'].isnull().all():
-        if 'latency_ms' in df.columns and not df['latency_ms'].isnull().all():
-            df['fps_inst'] = 1000.0 / df['latency_ms']
+            df[col] = float('nan')
     return df
 
 def compute_elapsed_sec(df):
@@ -140,19 +175,17 @@ def load_all_data(raw_path, methods_filter=None, sources_filter=None):
     for f in files:
         try:
             df = pd.read_csv(f)
+        # Normalize headers and derive missing metrics (especialmente FlowerAI)
+        df = normalize_columns(df)
 
-            # Normalize headers and derive missing metrics (especialmente FlowerAI)
-            df = normalize_columns(df)
-
-            # Method and source (clean)
-            if 'method' not in df.columns:
-                df['method'] = infer_method_from_filename(f)
-            if 'source' not in df.columns:
-                df['source'] = os.path.basename(f)
-
-            df = fill_missing_columns(df)
-            df = compute_elapsed_sec(df)
-            df = check_cpu_pct(df)
+        # Method and source (clean)
+        if 'method' not in df.columns:
+            df['method'] = infer_method_from_filename(f)
+        if 'source' not in df.columns:
+            df['source'] = os.path.basename(f)
+        df = fill_missing_columns(df)
+        df = compute_elapsed_sec(df)
+        df = check_cpu_pct(df)
             # Save file info for summary
             run_start = pd.to_datetime(df['timestamp'], errors='coerce').min() if 'timestamp' in df.columns else pd.NaT
             run_duration = df['elapsed_sec'].max(skipna=True) if 'elapsed_sec' in df.columns else np.nan
