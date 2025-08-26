@@ -273,12 +273,12 @@ def plot_threshold_vs_metric(df, method, threshold_col, metric_col, out_dir, fmt
     plt.savefig(os.path.join(out_dir, fname), dpi=dpi)
     plt.close()
 
-def plot_timeline(df, method, out_dir, fmt, dpi):
+def plot_timeline(df, method, out_dir, fmt, dpi, no_smooth=False):
     """
     Plot FPS and detection timeline for the specified method.
 
     Args:
-        df (pd.DataFrame), method (str), out_dir (str), fmt (str), dpi (int)
+        df (pd.DataFrame), method (str), out_dir (str), fmt (str), dpi (int), no_smooth (bool)
     """
     import matplotlib.pyplot as plt
 
@@ -287,18 +287,44 @@ def plot_timeline(df, method, out_dir, fmt, dpi):
         return
 
     fig, ax1 = plt.subplots(figsize=(12, 5))
+
+    # Always plot fps_inst on ax1
     if 'fps_inst' in data.columns:
-        ax1.plot(data['frame_id'], data['fps_inst'], 'b-', label="FPS Inst")
-        ax1.set_ylabel('FPS Inst', color='b')
+        ax1.plot(data['frame_id'], data['fps_inst'], 'b-', label="FPS inst")
+        ax1.set_ylabel('FPS inst', color='b')
         ax1.tick_params(axis='y', labelcolor='b')
-    ax2 = ax1.twinx()
-    if 'detection_flag' in data.columns:
-        ax2.plot(data['frame_id'], data['detection_flag'], 'g--', label="Detection Flag")
-        ax2.set_ylabel('Detection Flag', color='g')
-        ax2.tick_params(axis='y', labelcolor='g')
+
+    ax2 = None
+    # Only plot detection smoothed series if no_smooth is False and detection data exists
+    if not no_smooth:
+        series = None
+        if 'detection_flag' in data.columns:
+            series = data['detection_flag']
+        elif 'detections' in data.columns:
+            series = (data['detections'] > 0).astype(float)
+        # Only proceed if we have detection data
+        if series is not None:
+            smoothed = series.rolling(window=5, min_periods=1).mean()
+            ax2 = ax1.twinx()
+            ax2.plot(data['frame_id'], smoothed, color='orange', label="Detección (suavizado)")
+            ax2.set_ylabel("Detección (0–1)", color='orange')
+            ax2.set_ylim([0, 1])
+            ax2.tick_params(axis='y', labelcolor='orange')
+
+    # Add legends
+    ax1.legend(loc='upper left')
+    if ax2:
+        ax2.legend(loc='upper right')
+
+    # Enable grid
+    ax1.grid(True, alpha=0.25)
+
+    # Set title
     plt.title(f"Timeline FPS y Detección ({method})")
-    fig.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"timeline.{fmt}"), dpi=dpi)
+
+    # Tight layout and save
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, f"timeline.{fmt}"), dpi=dpi, bbox_inches='tight')
     plt.close()
 
 def write_readme(args, results):
@@ -415,6 +441,12 @@ def main():
         default=200,
         help="DPI for output figures (default: 200)"
     )
+    # Insert --no-smooth argument after --dpi
+    parser.add_argument(
+        "--no-smooth",
+        action="store_true",
+        help="If set, do not plot the smoothed detection series and omit secondary axis"
+    )
     parser.add_argument(
         "--only",
         type=str,
@@ -479,7 +511,7 @@ def main():
             plot_threshold_vs_metric(df_base, args.method, args.threshold_column, "fps_inst", args.out, args.format, args.dpi)
             plot_threshold_vs_metric(df_coord, args.method, args.threshold_column, "coverage_pct", args.out, args.format, args.dpi)
         # Timeline
-        plot_timeline(df_coord, args.method, args.out, args.format, args.dpi)
+        plot_timeline(df_coord, args.method, args.out, args.format, args.dpi, args.no_smooth)
         results = {
             'mode': 'paired',
             'method': args.method,
@@ -497,7 +529,7 @@ def main():
         # Save only tabla_44_coordinacion.csv and .md, no other tables
         save_simple_baseline_table_markdown(metrics, args.tables)
         # Only plot timeline (no bar or threshold plots)
-        plot_timeline(df, args.method, args.out, args.format, args.dpi)
+        plot_timeline(df, args.method, args.out, args.format, args.dpi, args.no_smooth)
         results = {
             'mode': 'simple',
             'method': args.method,
