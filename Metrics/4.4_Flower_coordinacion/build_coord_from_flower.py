@@ -21,16 +21,29 @@ def ensure_output_dir(out_path):
 
 def normalize_columns(df):
     df.columns = [c.strip().lower() for c in df.columns]
-    # Rename elapsed_sec or id_elapsed_sec to frame_id if present
-    if 'id_elapsed_sec' in df.columns:
-        df = df.rename(columns={'id_elapsed_sec': 'frame_id'})
-    elif 'elapsed_sec' in df.columns:
-        df = df.rename(columns={'elapsed_sec': 'frame_id'})
+    orig_cols = list(df.columns)
+    # Only rename elapsed_sec or id_elapsed_sec to frame_id if frame_id does not already exist
+    if 'frame_id' not in df.columns:
+        if 'id_elapsed_sec' in df.columns:
+            df = df.rename(columns={'id_elapsed_sec': 'frame_id'})
+        elif 'elapsed_sec' in df.columns:
+            df = df.rename(columns={'elapsed_sec': 'frame_id'})
+    # Remove duplicate columns, keep first occurrence
+    before = len(df.columns)
+    df = df.loc[:, ~df.columns.duplicated()]
+    after = len(df.columns)
+    dups_removed = before - after
+    if dups_removed > 0:
+        logging.info(f"Removed {dups_removed} duplicate columns after renaming in normalize_columns.")
     return df
 
 def load_csv(csv_path):
     df = pd.read_csv(csv_path)
-    return normalize_columns(df)
+    df = normalize_columns(df)
+    # Ensure frame_id is numeric (coerce errors)
+    if 'frame_id' in df.columns:
+        df['frame_id'] = pd.to_numeric(df['frame_id'], errors='coerce')
+    return df
 
 def get_flower_present_frames(metrics_df, min_dets):
     # FlowerAI rows
@@ -42,7 +55,10 @@ def get_flower_present_frames(metrics_df, min_dets):
         flower_present = flower_df['detections'] >= min_dets
     else:
         raise ValueError("Neither 'detection_flag' nor 'detections' column found in FlowerAI rows.")
-    present_frames = set(flower_df.loc[flower_present, 'frame_id'])
+    # Build set of unique ints, dropna, astype(int)
+    present_frames = set(
+        flower_df.loc[flower_present, 'frame_id'].dropna().astype(int).unique()
+    )
     return present_frames
 
 def method_to_prefix(method):
@@ -72,6 +88,20 @@ def main():
     # Get flower-present frames
     flower_present_frames = get_flower_present_frames(metrics_df, args.min_dets)
 
+    # If present_ids is empty, log a warning and copy baseline to coord for each method
+    if not flower_present_frames:
+        logging.warning("No present frames found in FlowerAI metrics (present_ids is empty).")
+        for method in methods:
+            prefix = method_to_prefix(method)
+            baseline_path = os.path.join(args.out, f"{prefix}_std.csv")
+            coord_path = os.path.join(args.out, f"{prefix}_std_coord.csv")
+            if not os.path.isfile(baseline_path):
+                logging.warning(f"Baseline file {baseline_path} not found for method '{method}'. Skipping.")
+                continue
+            copyfile(baseline_path, coord_path)
+            logging.warning(f"[{method}] present_ids empty; copied baseline file to coord path without filtering.")
+        return
+
     for method in methods:
         prefix = method_to_prefix(method)
         baseline_path = os.path.join(args.out, f"{prefix}_std.csv")
@@ -82,10 +112,14 @@ def main():
 
         # Special case: FlowerAI
         if prefix == "flower":
-            # If the standardized file exists, just filter to frames (if needed) and save as coord file
             df = load_csv(baseline_path)
             orig_count = len(df)
-            df_coord = df[df['frame_id'].isin(flower_present_frames)]
+            # Use robust Int64 logic for filtering
+            if 'frame_id' in df.columns:
+                mask = df['frame_id'].astype('Int64').isin(flower_present_frames)
+                df_coord = df.loc[mask]
+            else:
+                df_coord = df.iloc[[]]
             coord_count = len(df_coord)
             df_coord.to_csv(coord_path, index=False)
             logging.info(f"[{method}] baseline: {orig_count}, coord: {coord_count}")
@@ -97,7 +131,8 @@ def main():
         if 'frame_id' not in df.columns:
             logging.warning(f"File {baseline_path} does not have a 'frame_id' column after normalization.")
             continue
-        df_coord = df[df['frame_id'].isin(flower_present_frames)]
+        mask = df['frame_id'].astype('Int64').isin(flower_present_frames)
+        df_coord = df.loc[mask]
         coord_count = len(df_coord)
         df_coord.to_csv(coord_path, index=False)
         logging.info(f"[{method}] baseline: {orig_count}, coord: {coord_count}")
