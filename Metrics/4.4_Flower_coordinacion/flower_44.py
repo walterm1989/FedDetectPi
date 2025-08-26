@@ -273,14 +273,23 @@ def plot_threshold_vs_metric(df, method, threshold_col, metric_col, out_dir, fmt
     plt.savefig(os.path.join(out_dir, fname), dpi=dpi)
     plt.close()
 
-def plot_timeline(df, method, out_dir, fmt, dpi, no_smooth=False):
+import re
+
+def plot_timeline(df, method, out_dir, fmt, dpi, no_smooth=False, suffix=''):
     """
     Plot FPS and detection timeline for the specified method.
 
     Args:
-        df (pd.DataFrame), method (str), out_dir (str), fmt (str), dpi (int), no_smooth (bool)
+        df (pd.DataFrame), method (str), out_dir (str), fmt (str), dpi (int), no_smooth (bool), suffix (str)
     """
     import matplotlib.pyplot as plt
+
+    # Make slug for method
+    slug = re.sub(r'[^A-Za-z0-9]+', '_', method).strip('_')
+    # Ensure timelines out_dir exists
+    os.makedirs(out_dir, exist_ok=True)
+    # Filename with optional suffix
+    fname = f"timeline_{slug}{('_'+suffix) if suffix else ''}.{fmt}"
 
     data = df[df['method'] == method]
     if 'frame_id' not in data.columns:
@@ -324,7 +333,7 @@ def plot_timeline(df, method, out_dir, fmt, dpi, no_smooth=False):
 
     # Tight layout and save
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"timeline.{fmt}"), dpi=dpi, bbox_inches='tight')
+    plt.savefig(os.path.join(out_dir, fname), dpi=dpi, bbox_inches='tight')
     plt.close()
 
 def write_readme(args, results):
@@ -506,42 +515,15 @@ def main():
         import glob
 
         print(f"[INFO] Batch-all mode enabled.")
-        # Discover available baseline and coord files in std-dir
         std_dir = args.std_dir
-        methods = []
-        # Auto-discover methods as unique method strings from flower_std.csv, bboxes_std.csv, keypoints_std.csv
-        # Or use a default list if not found
-        method_set = set()
-        baseline_files = [
-            os.path.join(std_dir, "bboxes_std.csv"),
-            os.path.join(std_dir, "keypoints_std.csv"),
-            os.path.join(std_dir, "flower_std.csv"),
-        ]
-        coord_files = [
-            os.path.join(std_dir, "bboxes_std_coord.csv"),
-            os.path.join(std_dir, "keypoints_std_coord.csv"),
-            os.path.join(std_dir, "flower_std_coord.csv"),
-        ]
-        method_file_map = {
-            "BBoxes-YOLOv4tiny": ("bboxes_std.csv", "bboxes_std_coord.csv"),
-            "Keypoints-Movenet": ("keypoints_std.csv", "keypoints_std_coord.csv"),
-            "Flower-Classifier": ("flower_std.csv", "flower_std_coord.csv"),
+        # New: Centralized method to prefix mapping
+        method_prefix_map = {
+            'BBoxes-YOLOv4tiny': 'bboxes',
+            'KeyPoints-ResNet50': 'keypoints',
+            'FlowerAI': 'flower'
         }
-        # Fallback if new methods are present
-        for base_file in baseline_files:
-            if os.path.exists(base_file):
-                try:
-                    df = pd.read_csv(base_file)
-                    if 'method' in df.columns:
-                        method_set.update(df['method'].unique())
-                except Exception:
-                    continue
-        # Use method_file_map keys if unable to discover
-        if not method_set:
-            method_set = set(method_file_map.keys())
-        methods = list(method_set)
+        methods = list(method_prefix_map.keys())
 
-        # For friendly label: use the method string
         results_dict = {}
         comparative_rows = []
         columns = [
@@ -553,14 +535,11 @@ def main():
             "Aplicabilidad práctica (y mejoras)"
         ]
 
-        # For bar chart data
         deltas_data = { "method": [], "delta_fps": [], "delta_cpu": [], "delta_ram": [], "delta_cov": [] }
-        # For Markdown table
         markdown_lines = []
         markdown_lines.append("| " + " | ".join(columns) + " |")
         markdown_lines.append("|" + " --- |" * len(columns))
 
-        # For timeline output
         timelines_dir = os.path.join(args.out, "timelines")
         os.makedirs(timelines_dir, exist_ok=True)
 
@@ -570,29 +549,10 @@ def main():
             'fps_drop': args.fps_drop
         }
 
-        for method in methods:
-            # Find matching baseline and coord files
-            # Guess file names from method or use map
-            base_file = None
-            coord_file = None
-            if method in method_file_map:
-                base_file = os.path.join(std_dir, method_file_map[method][0])
-                coord_file = os.path.join(std_dir, method_file_map[method][1])
-            else:
-                # Try to guess by method, e.g. "bboxes" in method
-                for f in baseline_files:
-                    if f.split("/")[-1].split("_")[0].lower() in method.lower():
-                        base_file = f
-                        break
-                for f in coord_files:
-                    if f.split("/")[-1].split("_")[0].lower() in method.lower():
-                        coord_file = f
-                        break
+        for method, prefix in method_prefix_map.items():
+            base_file = os.path.join(std_dir, f"{prefix}_std.csv")
+            coord_file = os.path.join(std_dir, f"{prefix}_std_coord.csv")
 
-            # If still not found, skip
-            if not (base_file and coord_file):
-                warnings.warn(f"Could not match files for method {method}. Skipping.")
-                continue
             if not os.path.exists(base_file):
                 warnings.warn(f"Missing baseline file {base_file} for method {method}. Skipping.")
                 continue
@@ -621,9 +581,7 @@ def main():
                 note.strip()
             ]
             comparative_rows.append(row)
-            # Markdown row
             markdown_lines.append("| " + " | ".join(row) + " |")
-            # For deltas bar charts
             deltas_data["method"].append(method)
             deltas_data["delta_fps"].append(float(deltas['delta_fps_mean']))
             deltas_data["delta_cpu"].append(float(deltas['delta_cpu_mean']))
@@ -635,13 +593,13 @@ def main():
                 "deltas": deltas,
             }
 
-            # Timeline plots for each method
+            # Timeline plots for each method (use suffixes)
             try:
-                plot_timeline(df_base, method, timelines_dir, args.format, args.dpi, args.no_smooth)
+                plot_timeline(df_base, method, timelines_dir, args.format, args.dpi, args.no_smooth, suffix='baseline')
             except Exception as e:
                 warnings.warn(f"Could not plot baseline timeline for {method}: {e}")
             try:
-                plot_timeline(df_coord, method, timelines_dir, args.format, args.dpi, args.no_smooth)
+                plot_timeline(df_coord, method, timelines_dir, args.format, args.dpi, args.no_smooth, suffix='coord')
             except Exception as e:
                 warnings.warn(f"Could not plot coordination timeline for {method}: {e}")
 
