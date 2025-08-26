@@ -397,6 +397,8 @@ def save_simple_baseline_table_markdown(metrics, tables_dir):
         f.write("| " + " | ".join(values) + " |\n")
 
 def main():
+    import warnings
+
     parser = argparse.ArgumentParser(description="Flower 4.4 Coordination Metrics")
     parser.add_argument(
         "--baseline-input",
@@ -441,7 +443,6 @@ def main():
         default=200,
         help="DPI for output figures (default: 200)"
     )
-    # Insert --no-smooth argument after --dpi
     parser.add_argument(
         "--no-smooth",
         action="store_true",
@@ -482,11 +483,240 @@ def main():
         action="store_true",
         help="If set, generate a README file"
     )
+    # --- new batch-all mode ---
+    parser.add_argument(
+        "--batch-all",
+        action="store_true",
+        help="If set, batch process all methods in standardized directory"
+    )
+    parser.add_argument(
+        "--std-dir",
+        type=str,
+        default="Metrics/out/standardized",
+        help="Directory for standardized CSVs (default: Metrics/out/standardized)"
+    )
     args = parser.parse_args()
 
     # Ensure output directories exist
     os.makedirs(args.out, exist_ok=True)
     os.makedirs(args.tables, exist_ok=True)
+
+    # --------- BATCH-ALL MODE ---------
+    if args.batch_all:
+        import glob
+
+        print(f"[INFO] Batch-all mode enabled.")
+        # Discover available baseline and coord files in std-dir
+        std_dir = args.std_dir
+        methods = []
+        # Auto-discover methods as unique method strings from flower_std.csv, bboxes_std.csv, keypoints_std.csv
+        # Or use a default list if not found
+        method_set = set()
+        baseline_files = [
+            os.path.join(std_dir, "bboxes_std.csv"),
+            os.path.join(std_dir, "keypoints_std.csv"),
+            os.path.join(std_dir, "flower_std.csv"),
+        ]
+        coord_files = [
+            os.path.join(std_dir, "bboxes_std_coord.csv"),
+            os.path.join(std_dir, "keypoints_std_coord.csv"),
+            os.path.join(std_dir, "flower_std_coord.csv"),
+        ]
+        method_file_map = {
+            "BBoxes-YOLOv4tiny": ("bboxes_std.csv", "bboxes_std_coord.csv"),
+            "Keypoints-Movenet": ("keypoints_std.csv", "keypoints_std_coord.csv"),
+            "Flower-Classifier": ("flower_std.csv", "flower_std_coord.csv"),
+        }
+        # Fallback if new methods are present
+        for base_file in baseline_files:
+            if os.path.exists(base_file):
+                try:
+                    df = pd.read_csv(base_file)
+                    if 'method' in df.columns:
+                        method_set.update(df['method'].unique())
+                except Exception:
+                    continue
+        # Use method_file_map keys if unable to discover
+        if not method_set:
+            method_set = set(method_file_map.keys())
+        methods = list(method_set)
+
+        # For friendly label: use the method string
+        results_dict = {}
+        comparative_rows = []
+        columns = [
+            "Esquema",
+            "FPS base", "FPS coord", "ΔFPS (%)",
+            "CPU base (%)", "CPU coord (%)", "ΔCPU (%)",
+            "RAM base (MB)", "RAM coord (MB)", "ΔRAM (MB)",
+            "Cobertura base (%)", "Cobertura coord (%)", "ΔCobertura (p.p.)",
+            "Aplicabilidad práctica (y mejoras)"
+        ]
+
+        # For bar chart data
+        deltas_data = { "method": [], "delta_fps": [], "delta_cpu": [], "delta_ram": [], "delta_cov": [] }
+        # For Markdown table
+        markdown_lines = []
+        markdown_lines.append("| " + " | ".join(columns) + " |")
+        markdown_lines.append("|" + " --- |" * len(columns))
+
+        # For timeline output
+        timelines_dir = os.path.join(args.out, "timelines")
+        os.makedirs(timelines_dir, exist_ok=True)
+
+        thresholds = {
+            'cpu_ohw': args.cpu_ohw,
+            'ram_ohw': args.ram_ohw,
+            'fps_drop': args.fps_drop
+        }
+
+        for method in methods:
+            # Find matching baseline and coord files
+            # Guess file names from method or use map
+            base_file = None
+            coord_file = None
+            if method in method_file_map:
+                base_file = os.path.join(std_dir, method_file_map[method][0])
+                coord_file = os.path.join(std_dir, method_file_map[method][1])
+            else:
+                # Try to guess by method, e.g. "bboxes" in method
+                for f in baseline_files:
+                    if f.split("/")[-1].split("_")[0].lower() in method.lower():
+                        base_file = f
+                        break
+                for f in coord_files:
+                    if f.split("/")[-1].split("_")[0].lower() in method.lower():
+                        coord_file = f
+                        break
+
+            # If still not found, skip
+            if not (base_file and coord_file):
+                warnings.warn(f"Could not match files for method {method}. Skipping.")
+                continue
+            if not os.path.exists(base_file):
+                warnings.warn(f"Missing baseline file {base_file} for method {method}. Skipping.")
+                continue
+            if not os.path.exists(coord_file):
+                warnings.warn(f"Missing coordination file {coord_file} for method {method}. Skipping.")
+                continue
+
+            try:
+                df_base = load_data(base_file, only_methods=[method])
+                df_coord = load_data(coord_file, only_methods=[method])
+            except Exception as e:
+                warnings.warn(f"Error loading files for {method}: {e}")
+                continue
+
+            metrics_base = compute_metrics(df_base, method)
+            metrics_coord = compute_metrics(df_coord, method)
+            deltas = compute_overhead(metrics_base, metrics_coord, args.cpu_ohw, args.ram_ohw, args.fps_drop)
+            note = make_note_coord(method, deltas, thresholds).replace("\n", " ").replace("|", "/")
+
+            row = [
+                method,
+                f"{metrics_base['fps_mean']:.2f}", f"{metrics_coord['fps_mean']:.2f}", f"{deltas['delta_fps_mean']:.2f}",
+                f"{metrics_base['cpu_mean_pct']:.2f}", f"{metrics_coord['cpu_mean_pct']:.2f}", f"{deltas['delta_cpu_mean']:.2f}",
+                f"{metrics_base['ram_mean_mb']:.2f}", f"{metrics_coord['ram_mean_mb']:.2f}", f"{deltas['delta_ram_mean']:.2f}",
+                f"{metrics_base['coverage_pct']:.2f}", f"{metrics_coord['coverage_pct']:.2f}", f"{deltas['delta_coverage']:.2f}",
+                note.strip()
+            ]
+            comparative_rows.append(row)
+            # Markdown row
+            markdown_lines.append("| " + " | ".join(row) + " |")
+            # For deltas bar charts
+            deltas_data["method"].append(method)
+            deltas_data["delta_fps"].append(float(deltas['delta_fps_mean']))
+            deltas_data["delta_cpu"].append(float(deltas['delta_cpu_mean']))
+            deltas_data["delta_ram"].append(float(deltas['delta_ram_mean']))
+            deltas_data["delta_cov"].append(float(deltas['delta_coverage']))
+            results_dict[method] = {
+                "metrics_base": metrics_base,
+                "metrics_coord": metrics_coord,
+                "deltas": deltas,
+            }
+
+            # Timeline plots for each method
+            try:
+                plot_timeline(df_base, method, timelines_dir, args.format, args.dpi, args.no_smooth)
+            except Exception as e:
+                warnings.warn(f"Could not plot baseline timeline for {method}: {e}")
+            try:
+                plot_timeline(df_coord, method, timelines_dir, args.format, args.dpi, args.no_smooth)
+            except Exception as e:
+                warnings.warn(f"Could not plot coordination timeline for {method}: {e}")
+
+        # === Save comparative CSV and Markdown ===
+        tabla_csv = os.path.join(args.tables, "tabla_44_coordinacion_comparativa.csv")
+        tabla_md  = os.path.join(args.tables, "tabla_44_coordinacion_comparativa.md")
+        import csv
+        # CSV
+        with open(tabla_csv, "w", newline='', encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            for row in comparative_rows:
+                writer.writerow(row)
+        # Markdown
+        with open(tabla_md, "w", encoding="utf-8") as f:
+            for line in markdown_lines:
+                f.write(line + "\n")
+
+        # === Delta bar charts ===
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        def plot_delta_bar(key, ylabel, fname):
+            plt.figure(figsize=(8,5))
+            vals = deltas_data[key]
+            x = np.arange(len(deltas_data["method"]))
+            plt.bar(x, vals, color="skyblue")
+            plt.xticks(x, deltas_data["method"], rotation=15)
+            plt.ylabel(ylabel)
+            plt.title(f"Δ{ylabel} (Coordinación - Baseline)")
+            plt.tight_layout()
+            plt.savefig(os.path.join(args.out, fname), dpi=args.dpi, bbox_inches='tight')
+            plt.close()
+
+        plot_delta_bar("delta_fps", "FPS (%)", "fig_44_deltas_fps." + args.format)
+        plot_delta_bar("delta_cpu", "CPU (%)", "fig_44_deltas_cpu." + args.format)
+        plot_delta_bar("delta_ram", "RAM (MB)", "fig_44_deltas_ram." + args.format)
+        plot_delta_bar("delta_cov", "Cobertura (p.p.)", "fig_44_deltas_cobertura." + args.format)
+
+        # === README_4.4.md ===
+        readme_path = os.path.join(os.path.dirname(__file__), "README_4.4.md")
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(f"# Coordinación FlowerAI 4.4 - Batch All\n\n")
+            f.write("Este informe resume la comparación de métricas entre el baseline y la coordinación para todos los esquemas (métodos) analizados.\n\n")
+            f.write("## Umbrales utilizados\n")
+            f.write(f"- CPU overhead permitido: {args.cpu_ohw:.2f}%\n")
+            f.write(f"- RAM overhead permitido: {args.ram_ohw:.2f} MB\n")
+            f.write(f"- Caída de FPS permitida: -{args.fps_drop:.2f}%\n\n")
+            f.write("## Tablas comparativas\n\n")
+            rel_tabla_csv = os.path.relpath(tabla_csv, os.path.dirname(readme_path))
+            rel_tabla_md = os.path.relpath(tabla_md, os.path.dirname(readme_path))
+            f.write(f"- [Tabla comparativa CSV]({rel_tabla_csv})\n")
+            f.write(f"- [Tabla comparativa Markdown]({rel_tabla_md})\n\n")
+            f.write("## Figuras de deltas\n\n")
+            for suffix, desc in [
+                ("fig_44_deltas_fps", "ΔFPS"),
+                ("fig_44_deltas_cpu", "ΔCPU"),
+                ("fig_44_deltas_ram", "ΔRAM"),
+                ("fig_44_deltas_cobertura", "ΔCobertura"),
+            ]:
+                fname = suffix + "." + args.format
+                rel_path = os.path.relpath(os.path.join(args.out, fname), os.path.dirname(readme_path))
+                f.write(f"- ![{desc}]({rel_path})\n")
+            f.write("\n## Timelines por método\n\n")
+            for method in deltas_data["method"]:
+                timeline_path = os.path.relpath(os.path.join(timelines_dir, f"timeline.{args.format}"), os.path.dirname(readme_path))
+                f.write(f"- {method}: `{os.path.join('figs/timelines', f'timeline.{args.format}')}`\n")
+            f.write("\n---\n")
+            f.write("Este reporte fue generado automáticamente.\n")
+
+        print(f"[INFO] Batch-all mode completed. Comparative table at {tabla_csv}, Markdown at {tabla_md}")
+        print(f"[INFO] Figures saved in {args.out}. README_4.4.md written.")
+        return
+
+    # --------- END BATCH-ALL ---------
 
     print(f"[INFO] Baseline input: {args.baseline_input}")
     if args.coord_input:
