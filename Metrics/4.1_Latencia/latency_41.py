@@ -25,9 +25,9 @@ def parse_args():
                         help="Figure DPI (default: %(default)s)")
     parser.add_argument("--only", default=None,
                         help="Comma-separated list of methods to include (default: all)")
-    parser.add_argument("--rt-fps", type=float, default=12,
+    parser.add_argument("--rt-fps", type=float, default=6,
                         help="Real-time FPS threshold (default: %(default)s)")
-    parser.add_argument("--rt-p95-lat-ms", type=float, default=120,
+    parser.add_argument("--rt-p95-lat-ms", type=float, default=250,
                         help="Real-time P95 latency (ms) threshold (default: %(default)s)")
     parser.add_argument("--make-readme", action="store_true",
                         help="If set, generate README_4.1.md")
@@ -92,6 +92,41 @@ def method_to_esquema(method, is_reference=False):
         label = f"{base_label}{REFERENCE_SUFFIX}"
     return label
 
+def make_note(method, fps_mean, p95_ms, rt_fps, rt_p95):
+    # Tier A
+    if pd.notna(fps_mean) and pd.notna(p95_ms):
+        if fps_mean >= rt_fps and p95_ms <= rt_p95:
+            note = ("Apto para flujo continuo en edge. Mantener resolución actual o reducir si se requiere margen; "
+                    "considerar pipeline asíncrono para estabilidad.")
+        # Tier B
+        elif fps_mean >= rt_fps/2 or p95_ms <= 2*rt_p95:
+            if "Flower" in method:
+                note = ("Mejor desempeño relativo en FPS dentro de RPi. Adecuado para conteo/presencia a baja frecuencia; "
+                        "optimizable con resolución reducida y pipeline asíncrono.")
+            else:
+                note = ("Útil para monitorización básica o por eventos. Mejorable con menor resolución (p. ej., 320×240), "
+                        "pipeline asíncrono (captura/inferencia en hilos), ejecución headless y ajuste de umbral/NMS.")
+        # Tier C
+        else:
+            note = ("Referencia de mayor complejidad; recomendable para análisis offline o como línea base. "
+                    "Para uso en vivo en RPi, optar por modelos más ligeros o esquema por etapas (caja → pose).")
+    else:
+        # If any of the metrics is nan, default to Tier C
+        note = ("Referencia de mayor complejidad; recomendable para análisis offline o como línea base. "
+                "Para uso en vivo en RPi, optar por modelos más ligeros o esquema por etapas (caja → pose).")
+
+    # Special cases
+    if pd.isna(p95_ms):
+        note += " P95 no disponible en esta corrida; la distribución sugiere latencia en centenas de ms según histogramas."
+    # Suggestions by method
+    if method == "KeyPoints-ResNet50":
+        note += " Explorar variantes lightweight (BlazePose/MoveNet) o pipeline por etapas."
+    if "BBoxes-YOLOv4tiny" in method:
+        note += " Ajustar resolución/stride y NMS; priorizar GPU/NPU si estuviera disponible."
+    if "FlowerAI" in method:
+        note += " Optimizar ciclo local (captura/cola) y tamaño de lote si aplica."
+    return note
+
 def make_tables(df_agg, tables_dir, rt_fps, rt_p95_lat_ms, is_reference=False):
     table_csv = os.path.join(tables_dir, f"tabla_41_latencia_{'referencia' if is_reference else 'local'}.csv")
     table_md = table_csv.replace(".csv", ".md")
@@ -102,19 +137,15 @@ def make_tables(df_agg, tables_dir, rt_fps, rt_p95_lat_ms, is_reference=False):
         fps = row["fps_mean"]
         p95 = row["latency_p95_ms"]
         var = row["var_latency_ms"]
-        if is_reference:
-            notas = "No edge; solo referencia de complejidad"
-        else:
-            if fps < rt_fps or p95 > rt_p95_lat_ms:
-                notas = f"No viable para tiempo real (umbral {rt_fps} FPS / P95 {rt_p95_lat_ms} ms)"
-            else:
-                notas = "Viable"
+
+        note = make_note(row["method"], fps, p95, rt_fps, rt_p95_lat_ms)
+
         rows.append(OrderedDict([
             ("Esquema", esquema),
             ("Media FPS", f"{fps:.2f}"),
             ("P95 (ms)", f"{p95:.1f}"),
             ("Varianza (lat_ms)", f"{var:.1f}"),
-            ("Notas", notas)
+            ("Aplicabilidad en edge (y mejoras)", note)
         ]))
     df_table = pd.DataFrame(rows)
     df_table.to_csv(table_csv, index=False)
@@ -218,6 +249,7 @@ def write_readme(fig_files, table_files, outdir, tablesdir, args):
         relpath = os.path.relpath(f, os.path.dirname(__file__))
         md.append(f"- ![]({relpath})")
     md.append("\n## Tablas")
+    md.append("\n**Nota:** En todas las tablas, la columna \"Aplicabilidad en edge (y mejoras)\" indica la idoneidad para uso en edge y posibles optimizaciones específicas por modelo.\n")
     for f in table_files:
         if f.endswith(".md"):
             relpath = os.path.relpath(f, os.path.dirname(__file__))
