@@ -46,13 +46,97 @@ def load_data(path, only_methods=None):
 
     return df
 
-def compute_metrics(data):
-    """Stub for metric computation."""
-    pass
+def compute_metrics(df, method):
+    """
+    Compute mean CPU, RAM, FPS, and coverage for a given method.
+    
+    Args:
+        df (pd.DataFrame): Input dataframe.
+        method (str): Method name to filter and compute metrics for.
+    
+    Returns:
+        dict: Dictionary with mean cpu, ram, fps, and coverage.
+    """
+    import numpy as np
 
-def compute_overhead(data):
-    """Stub for overhead computation."""
-    pass
+    # Filter dataframe by method
+    method_df = df[df['method'] == method] if method in df['method'].unique() else df.copy()
+
+    def safe_mean(series):
+        return np.nanmean(series) if not series.empty else np.nan
+
+    cpu_mean = safe_mean(method_df['cpu']) if 'cpu' in method_df.columns else np.nan
+    ram_mean = safe_mean(method_df['ram']) if 'ram' in method_df.columns else np.nan
+    fps_mean = safe_mean(method_df['fps']) if 'fps' in method_df.columns else np.nan
+    coverage = safe_mean(method_df['coverage']) if 'coverage' in method_df.columns else np.nan
+
+    return {
+        'cpu_mean': cpu_mean,
+        'ram_mean': ram_mean,
+        'fps_mean': fps_mean,
+        'coverage': coverage
+    }
+
+def compute_overhead(base_metrics, coord_metrics, cpu_ohw, ram_ohw, fps_drop):
+    """
+    Compute overhead metrics between base and coordination runs.
+
+    Args:
+        base_metrics (dict): Metrics for baseline {'cpu_mean', 'ram_mean', 'fps_mean', 'coverage'}.
+        coord_metrics (dict): Metrics for coordination {'cpu_mean', 'ram_mean', 'fps_mean', 'coverage'}.
+        cpu_ohw (float): Allowed CPU overhead.
+        ram_ohw (float): Allowed RAM overhead.
+        fps_drop (float): Allowed FPS drop (percent, negative).
+
+    Returns:
+        dict: Deltas and result.
+    """
+    import numpy as np
+
+    # Handle missing input
+    try:
+        cpu_base = base_metrics.get('cpu_mean', np.nan)
+        cpu_coord = coord_metrics.get('cpu_mean', np.nan)
+        ram_base = base_metrics.get('ram_mean', np.nan)
+        ram_coord = coord_metrics.get('ram_mean', np.nan)
+        fps_base = base_metrics.get('fps_mean', np.nan)
+        fps_coord = coord_metrics.get('fps_mean', np.nan)
+        cov_base = base_metrics.get('coverage', np.nan)
+        cov_coord = coord_metrics.get('coverage', np.nan)
+    except Exception:
+        cpu_base = cpu_coord = ram_base = ram_coord = fps_base = fps_coord = cov_base = cov_coord = np.nan
+
+    # Compute deltas
+    delta_cpu_mean = cpu_coord - cpu_base if not (np.isnan(cpu_coord) or np.isnan(cpu_base)) else np.nan
+    delta_ram_mean = ram_coord - ram_base if not (np.isnan(ram_coord) or np.isnan(ram_base)) else np.nan
+    delta_fps_mean = ((fps_coord - fps_base) / fps_base * 100) if not (np.isnan(fps_coord) or np.isnan(fps_base) or fps_base == 0) else np.nan
+    delta_coverage = cov_coord - cov_base if not (np.isnan(cov_coord) or np.isnan(cov_base)) else np.nan
+
+    # Result condition
+    if (
+        not np.isnan(delta_cpu_mean) and not np.isnan(delta_ram_mean) and not np.isnan(delta_fps_mean)
+        and abs(delta_cpu_mean) <= cpu_ohw
+        and abs(delta_ram_mean) <= ram_ohw
+        and delta_fps_mean >= -fps_drop
+    ):
+        result = 'OK'
+    elif (
+        np.isnan(delta_cpu_mean) or np.isnan(delta_ram_mean) or np.isnan(delta_fps_mean)
+    ):
+        result = 'Revisar ajustes'
+    else:
+        result = 'Revisar ajustes'
+
+    return {
+        'delta_cpu_mean': delta_cpu_mean,
+        'delta_ram_mean': delta_ram_mean,
+        'delta_fps_mean': delta_fps_mean,
+        'delta_coverage': delta_coverage,
+        'cpu_ohw': cpu_ohw,
+        'ram_ohw': ram_ohw,
+        'fps_drop': fps_drop,
+        'result': result
+    }
 
 def make_note_coord():
     """Stub for coordination note generation."""
