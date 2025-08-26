@@ -49,7 +49,7 @@ def load_data(path, only_methods=None):
 def compute_metrics(df, method):
     """
     Compute summary metrics for a given method.
-    Uses columns: fps_inst, latency_ms, cpu_pct, ram_mb, detection_flag.
+    Uses columns: fps_inst, latency_ms, cpu_pct, ram_mb, detection_flag or detections.
 
     Args:
         df (pd.DataFrame): Input dataframe.
@@ -80,9 +80,11 @@ def compute_metrics(df, method):
     ram_mean_mb = safe_mean(method_df['ram_mb']) if 'ram_mb' in method_df.columns else np.nan
     ram_p95_mb = safe_p95(method_df['ram_mb']) if 'ram_mb' in method_df.columns else np.nan
 
-    # coverage: percent of samples where detection_flag >= 1
+    # coverage: percent of samples where detection_flag >= 1, or detections >= 1, else np.nan
     if 'detection_flag' in method_df.columns:
-        coverage_pct = 100.0 * (method_df['detection_flag'] >= 1).sum() / len(method_df) if len(method_df) > 0 else np.nan
+        coverage_pct = 100.0 * (method_df['detection_flag'] >= 1).mean() if len(method_df) > 0 else np.nan
+    elif 'detections' in method_df.columns:
+        coverage_pct = 100.0 * (method_df['detections'] >= 1).mean() if len(method_df) > 0 else np.nan
     else:
         coverage_pct = np.nan
 
@@ -308,29 +310,66 @@ def write_readme(args, results):
         results: dict with method, metrics, deltas, result, paths.
     """
     readme_path = os.path.join(args.out, "README.md")
+    mode = results.get('mode', 'paired' if getattr(args, "coord_input", None) else 'simple')
     with open(readme_path, "w", encoding="utf-8") as f:
-        f.write(f"# Coordinación FlowerAI 4.4\n\n")
-        f.write(f"**Método:** `{results['method']}`\n\n")
-        f.write(f"**Archivo baseline:** `{args.baseline_input}`\n\n")
-        if args.coord_input:
+        f.write(f"# Coordinación FlowerAI 4.4\n")
+        f.write("\n")
+        f.write(f"**Modo:** {mode}\n")
+        f.write("\n")
+        f.write(f"**Método:** `{results['method']}`\n")
+        f.write("\n")
+        f.write(f"**Archivo baseline:** `{args.baseline_input}`\n")
+        f.write("\n")
+        if mode == "paired" and getattr(args, "coord_input", None):
             f.write(f"**Archivo coordinación:** `{args.coord_input}`\n\n")
-        f.write("## Métricas Baseline\n")
-        for k,v in results['metrics_base'].items():
-            f.write(f"- {k}: {v:.3f}\n")
-        f.write("\n## Métricas Coordinación\n")
-        for k,v in results['metrics_coord'].items():
-            f.write(f"- {k}: {v:.3f}\n")
-        f.write("\n## Deltas\n")
-        for k in ['delta_cpu_mean', 'delta_ram_mean', 'delta_fps_mean', 'delta_coverage']:
-            f.write(f"- {k}: {results['deltas'][k]:.3f}\n")
-        f.write(f"\n## Resultado: **{results['deltas']['result']}**\n\n")
-        f.write(make_note_coord(results['method'], results['deltas'], {
-            'cpu_ohw': args.cpu_ohw,
-            'ram_ohw': args.ram_ohw,
-            'fps_drop': args.fps_drop
-        }))
-        f.write("\n---\n")
-        f.write("Figuras y tablas generadas en las carpetas correspondientes.\n")
+            f.write("## Métricas Baseline\n")
+            for k, v in results['baseline'].items():
+                f.write(f"- {k}: {v:.3f}\n")
+            f.write("\n## Métricas Coordinación\n")
+            for k, v in results['coord'].items():
+                f.write(f"- {k}: {v:.3f}\n")
+            f.write("\n## Deltas\n")
+            for k in ['delta_cpu_mean', 'delta_ram_mean', 'delta_fps_mean', 'delta_coverage']:
+                f.write(f"- {k}: {results['deltas'][k]:.3f}\n")
+            f.write(f"\n## Resultado: **{results['deltas']['result']}**\n\n")
+            f.write(make_note_coord(results['method'], results['deltas'], {
+                'cpu_ohw': args.cpu_ohw,
+                'ram_ohw': args.ram_ohw,
+                'fps_drop': args.fps_drop
+            }))
+            f.write("\n---\n")
+            f.write("Figuras y tablas generadas en las carpetas correspondientes.\n")
+        else:
+            # simple mode
+            f.write("## Métricas Baseline\n")
+            for k, v in results['baseline'].items():
+                f.write(f"- {k}: {v:.3f}\n")
+            f.write("\nNota: Para analizar overhead, ejecutar en modo emparejado con --coord-input.\n")
+
+def save_simple_baseline_table_markdown(metrics, tables_dir):
+    """
+    Save tabla_44_coordinacion.csv and .md for simple mode.
+
+    Args:
+        metrics (dict): Baseline metrics.
+        tables_dir (str): Output directory for tables.
+    """
+    import pandas as pd
+
+    # Save CSV
+    csv_path = os.path.join(tables_dir, "tabla_44_coordinacion.csv")
+    pd.DataFrame([metrics], index=["baseline"]).to_csv(csv_path, index_label="key")
+    
+    # Save Markdown
+    md_path = os.path.join(tables_dir, "tabla_44_coordinacion.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        headers = ["key"] + list(metrics.keys())
+        values = ["baseline"] + [f"{v:.3f}" if isinstance(v, float) else str(v) for v in metrics.values()]
+        # Markdown table header
+        f.write("| " + " | ".join(headers) + " |\n")
+        f.write("|" + " --- |" * len(headers) + "\n")
+        # Markdown table row
+        f.write("| " + " | ".join(values) + " |\n")
 
 def main():
     parser = argparse.ArgumentParser(description="Flower 4.4 Coordination Metrics")
@@ -443,31 +482,29 @@ def main():
         # Timeline
         plot_timeline(df_coord, args.method, args.out, args.format, args.dpi)
         results = {
+            'mode': 'paired',
             'method': args.method,
-            'metrics_base': metrics_base,
-            'metrics_coord': metrics_coord,
+            'baseline': metrics_base,
+            'coord': metrics_coord,
             'deltas': deltas
         }
         if args.make_readme:
             write_readme(args, results)
     else:
-        # Simple mode: only baseline metrics and plots
+        # Simple mode: only baseline metrics and timeline plot
         df = load_data(args.baseline_input, only_methods=args.only)
         metrics = compute_metrics(df, args.method)
         print(f"[RESULT] Métricas baseline: {metrics}")
-        pd.DataFrame([metrics]).to_csv(os.path.join(args.tables,"metrics_single.csv"), index=False)
-        plot_bar_comparison(metrics, metrics, args.out, args.format, args.dpi)
-        if args.threshold_column in df.columns:
-            plot_threshold_vs_metric(df, args.method, args.threshold_column, "fps_inst", args.out, args.format, args.dpi)
-            plot_threshold_vs_metric(df, args.method, args.threshold_column, "coverage_pct", args.out, args.format, args.dpi)
+        # Save only tabla_44_coordinacion.csv and .md, no other tables
+        save_simple_baseline_table_markdown(metrics, args.tables)
+        # Only plot timeline (no bar or threshold plots)
         plot_timeline(df, args.method, args.out, args.format, args.dpi)
+        results = {
+            'mode': 'simple',
+            'method': args.method,
+            'baseline': metrics
+        }
         if args.make_readme:
-            results = {
-                'method': args.method,
-                'metrics_base': metrics,
-                'metrics_coord': metrics,
-                'deltas': {k: 0 for k in ['delta_cpu_mean','delta_ram_mean','delta_fps_mean','delta_coverage']}
-            }
             write_readme(args, results)
 
 if __name__ == "__main__":
