@@ -37,23 +37,99 @@ def write_readme():
 
 def main():
     parser = argparse.ArgumentParser(description="Flower 4.4 Coordination Metrics")
-    parser.add_argument("--data-dir", type=str, required=True, help="Directory containing input data")
-    parser.add_argument("--out-dir", type=str, default="tables", help="Directory to save output tables")
-    parser.add_argument("--figs-dir", type=str, default="figs", help="Directory to save output figures")
+    parser.add_argument(
+        "--baseline-input",
+        type=str,
+        default="Metrics/out/section4_metrics_all.csv",
+        help="Path to baseline input CSV (default: Metrics/out/section4_metrics_all.csv)"
+    )
+    parser.add_argument(
+        "--coord-input",
+        type=str,
+        default=None,
+        help="Path to coordination input CSV (optional)"
+    )
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="BBoxes-YOLOv4tiny",
+        help="Method to use (default: BBoxes-YOLOv4tiny)"
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        default="Metrics/4.4_Flower_coordinacion/figs",
+        help="Directory to save output figures (default: Metrics/4.4_Flower_coordinacion/figs)"
+    )
+    parser.add_argument(
+        "--tables",
+        type=str,
+        default="Metrics/4.4_Flower_coordinacion/tables",
+        help="Directory to save output tables (default: Metrics/4.4_Flower_coordinacion/tables)"
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["png", "pdf"],
+        default="png",
+        help="Format for output figures (png or pdf, default: png)"
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=200,
+        help="DPI for output figures (default: 200)"
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="Optional: Only process the specified section"
+    )
+    parser.add_argument(
+        "--cpu-ohw",
+        type=float,
+        default=5.0,
+        help="CPU overhead value (default: 5.0)"
+    )
+    parser.add_argument(
+        "--ram-ohw",
+        type=int,
+        default=50,
+        help="RAM overhead value (default: 50)"
+    )
+    parser.add_argument(
+        "--fps-drop",
+        type=float,
+        default=10.0,
+        help="FPS drop threshold (default: 10.0)"
+    )
+    parser.add_argument(
+        "--threshold-column",
+        type=str,
+        default="threshold",
+        help="Column name for threshold (default: threshold)"
+    )
+    parser.add_argument(
+        "--make-readme",
+        action="store_true",
+        help="If set, generate a README file"
+    )
     args = parser.parse_args()
 
     # Ensure output directories exist
-    os.makedirs(args.out_dir, exist_ok=True)
-    os.makedirs(args.figs_dir, exist_ok=True)
+    os.makedirs(args.out, exist_ok=True)
+    os.makedirs(args.tables, exist_ok=True)
 
     # Stub main logic
     data = load_data(args)
     metrics = compute_metrics(data)
     overhead = compute_overhead(data)
     make_note_coord()
-    save_tables(metrics, overhead, args.out_dir)
-    plotting(metrics, args.figs_dir)
-    write_readme()
+    save_tables(metrics, overhead, args.tables)
+    plotting(metrics, args.out)
+    if args.make_readme:
+        write_readme()
 
 if __name__ == "__main__":
     main()
