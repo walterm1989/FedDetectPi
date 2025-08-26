@@ -7,9 +7,44 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-def load_data(args):
-    """Stub for loading data."""
-    pass
+def load_data(path, only_methods=None):
+    """
+    Load and preprocess metrics data from a CSV file.
+
+    Args:
+        path (str): Path to the CSV file.
+        only_methods (list or str, optional): List of method names (or comma-separated string) to filter by.
+
+    Returns:
+        pd.DataFrame: Preprocessed DataFrame.
+    """
+    # Read CSV
+    df = pd.read_csv(path)
+
+    # Strip and lowercase column names
+    df.columns = [col.strip().lower() for col in df.columns]
+
+    # Rename id_elapsed_sec or elapsed_sec to frame_id if present
+    if 'id_elapsed_sec' in df.columns:
+        df.rename(columns={'id_elapsed_sec': 'frame_id'}, inplace=True)
+    elif 'elapsed_sec' in df.columns:
+        df.rename(columns={'elapsed_sec': 'frame_id'}, inplace=True)
+
+    # Convert numeric columns (except 'method', 'frame_id')
+    non_numeric = {'method', 'frame_id'}
+    for col in df.columns:
+        if col not in non_numeric:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Filter by only_methods if provided
+    if only_methods is not None:
+        if isinstance(only_methods, str):
+            only_list = [m.strip() for m in only_methods.split(',') if m.strip()]
+        else:
+            only_list = list(only_methods)
+        df = df[df['method'].isin(only_list)]
+
+    return df
 
 def compute_metrics(data):
     """Stub for metric computation."""
