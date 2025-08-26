@@ -48,76 +48,102 @@ def load_data(path, only_methods=None):
 
 def compute_metrics(df, method):
     """
-    Compute mean CPU, RAM, FPS, and coverage for a given method.
-    
+    Compute summary metrics for a given method.
+    Uses columns: fps_inst, latency_ms, cpu_pct, ram_mb, detection_flag.
+
     Args:
         df (pd.DataFrame): Input dataframe.
         method (str): Method name to filter and compute metrics for.
-    
+
     Returns:
-        dict: Dictionary with mean cpu, ram, fps, and coverage.
+        dict: Dictionary with required metrics.
+            - fps_mean
+            - latency_p95_ms
+            - cpu_mean_pct
+            - cpu_p95_pct
+            - ram_mean_mb
+            - ram_p95_mb
+            - coverage_pct
     """
     import numpy as np
 
     # Filter dataframe by method
     method_df = df[df['method'] == method] if method in df['method'].unique() else df.copy()
 
-    def safe_mean(series):
-        return np.nanmean(series) if not series.empty else np.nan
+    def safe_mean(s): return np.nanmean(s) if not s.empty else np.nan
+    def safe_p95(s): return np.nanpercentile(s, 95) if not s.empty else np.nan
 
-    cpu_mean = safe_mean(method_df['cpu']) if 'cpu' in method_df.columns else np.nan
-    ram_mean = safe_mean(method_df['ram']) if 'ram' in method_df.columns else np.nan
-    fps_mean = safe_mean(method_df['fps']) if 'fps' in method_df.columns else np.nan
-    coverage = safe_mean(method_df['coverage']) if 'coverage' in method_df.columns else np.nan
+    fps_mean = safe_mean(method_df['fps_inst']) if 'fps_inst' in method_df.columns else np.nan
+    latency_p95_ms = safe_p95(method_df['latency_ms']) if 'latency_ms' in method_df.columns else np.nan
+    cpu_mean_pct = safe_mean(method_df['cpu_pct']) if 'cpu_pct' in method_df.columns else np.nan
+    cpu_p95_pct = safe_p95(method_df['cpu_pct']) if 'cpu_pct' in method_df.columns else np.nan
+    ram_mean_mb = safe_mean(method_df['ram_mb']) if 'ram_mb' in method_df.columns else np.nan
+    ram_p95_mb = safe_p95(method_df['ram_mb']) if 'ram_mb' in method_df.columns else np.nan
+
+    # coverage: percent of samples where detection_flag >= 1
+    if 'detection_flag' in method_df.columns:
+        coverage_pct = 100.0 * (method_df['detection_flag'] >= 1).sum() / len(method_df) if len(method_df) > 0 else np.nan
+    else:
+        coverage_pct = np.nan
 
     return {
-        'cpu_mean': cpu_mean,
-        'ram_mean': ram_mean,
         'fps_mean': fps_mean,
-        'coverage': coverage
+        'latency_p95_ms': latency_p95_ms,
+        'cpu_mean_pct': cpu_mean_pct,
+        'cpu_p95_pct': cpu_p95_pct,
+        'ram_mean_mb': ram_mean_mb,
+        'ram_p95_mb': ram_p95_mb,
+        'coverage_pct': coverage_pct
     }
 
 def compute_overhead(base_metrics, coord_metrics, cpu_ohw, ram_ohw, fps_drop):
     """
-    Compute overhead metrics between base and coordination runs.
+    Compute overhead metrics between base and coordination runs with updated keys.
 
     Args:
-        base_metrics (dict): Metrics for baseline {'cpu_mean', 'ram_mean', 'fps_mean', 'coverage'}.
-        coord_metrics (dict): Metrics for coordination {'cpu_mean', 'ram_mean', 'fps_mean', 'coverage'}.
+        base_metrics (dict): Baseline metrics.
+        coord_metrics (dict): Coordination metrics.
         cpu_ohw (float): Allowed CPU overhead.
         ram_ohw (float): Allowed RAM overhead.
         fps_drop (float): Allowed FPS drop (percent, negative).
 
     Returns:
         dict: Deltas and result.
+            - delta_cpu_mean
+            - delta_ram_mean
+            - delta_fps_mean
+            - delta_coverage
+            - cpu_ohw
+            - ram_ohw
+            - fps_drop
+            - result ('OK' or 'Revisar ajustes')
     """
     import numpy as np
 
-    # Handle missing input
     try:
-        cpu_base = base_metrics.get('cpu_mean', np.nan)
-        cpu_coord = coord_metrics.get('cpu_mean', np.nan)
-        ram_base = base_metrics.get('ram_mean', np.nan)
-        ram_coord = coord_metrics.get('ram_mean', np.nan)
+        cpu_base = base_metrics.get('cpu_mean_pct', np.nan)
+        cpu_coord = coord_metrics.get('cpu_mean_pct', np.nan)
+        ram_base = base_metrics.get('ram_mean_mb', np.nan)
+        ram_coord = coord_metrics.get('ram_mean_mb', np.nan)
         fps_base = base_metrics.get('fps_mean', np.nan)
         fps_coord = coord_metrics.get('fps_mean', np.nan)
-        cov_base = base_metrics.get('coverage', np.nan)
-        cov_coord = coord_metrics.get('coverage', np.nan)
+        cov_base = base_metrics.get('coverage_pct', np.nan)
+        cov_coord = coord_metrics.get('coverage_pct', np.nan)
     except Exception:
         cpu_base = cpu_coord = ram_base = ram_coord = fps_base = fps_coord = cov_base = cov_coord = np.nan
 
-    # Compute deltas
+    # Compute deltas (coord - base for cpu, ram, coverage; percent change for fps)
     delta_cpu_mean = cpu_coord - cpu_base if not (np.isnan(cpu_coord) or np.isnan(cpu_base)) else np.nan
     delta_ram_mean = ram_coord - ram_base if not (np.isnan(ram_coord) or np.isnan(ram_base)) else np.nan
     delta_fps_mean = ((fps_coord - fps_base) / fps_base * 100) if not (np.isnan(fps_coord) or np.isnan(fps_base) or fps_base == 0) else np.nan
     delta_coverage = cov_coord - cov_base if not (np.isnan(cov_coord) or np.isnan(cov_base)) else np.nan
 
-    # Result condition
+    # Result: all deltas within allowed overheads (absolute for cpu/ram, >= for fps drop)
     if (
         not np.isnan(delta_cpu_mean) and not np.isnan(delta_ram_mean) and not np.isnan(delta_fps_mean)
         and abs(delta_cpu_mean) <= cpu_ohw
         and abs(delta_ram_mean) <= ram_ohw
-        and delta_fps_mean >= -fps_drop
+        and delta_fps_mean >= -abs(fps_drop)
     ):
         result = 'OK'
     elif (
