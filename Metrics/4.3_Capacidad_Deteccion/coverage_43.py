@@ -133,30 +133,37 @@ def compute_aggregates(df, presence_mask, intervals, min_detections=1):
     return results
 
 def make_note_coverage(row):
-    # Tiered comments based on coverage and gap, with suggestions
+    """
+    Generates a tiered, positive-phrased coverage note with method-specific suggestions.
+    Tiers and suggestions follow the project spec.
+    """
     coverage = row['% cobertura']
     gap = row['Gap máx sin detección (frames)']
     method = row['method']
-    note = ""
-    if coverage >= 95:
-        note = "Cobertura excelente; detección casi continua."
-    elif coverage >= 85:
-        note = "Cobertura buena, pero revisar posibles huecos."
-    elif coverage >= 70:
-        note = "Cobertura aceptable, algunos huecos largos pueden afectar la robustez."
-    elif coverage > 0:
-        note = "Cobertura limitada; se recomienda mejorar la detección."
-    else:
-        note = "No se detectaron objetos en los intervalos de presencia."
-    if gap > 10:
-        note += f" Máximo hueco sin detección: {gap} frames."
-    # Example method-specific suggestion
+
+    # Tier logic
+    if (coverage >= 85) and (gap <= 10):
+        note = ("Adecuado para presencia/aforo en edge; mantener resolución/umbral y considerar ROI si hay oclusiones.")
+        tier = "A"
+    elif (60 <= coverage < 85) or (11 <= gap <= 30):
+        note = ("Operable para monitorización por eventos; mejorar con ajuste de threshold/NMS, ROI sobre zona de interés y resolución 320×240.")
+        tier = "B"
+    elif (coverage < 60) or (gap > 30):
+        note = ("Señal complementaria / análisis offline; considerar modelos más ligeros o flujo por etapas (caja→pose) y optimizar umbral/ROI.")
+        tier = "C"
+    else:  # Safety fallback
+        note = "Cobertura evaluada; revisar detalles según necesidades específicas."
+        tier = "?"
+
+    # Method-specific suggestions
     suggestions = {
-        "YOLO": " Sugerencia: ajustar umbral de confianza.",
-        "FasterRCNN": " Sugerencia: entrenar con más datos de fondo.",
+        "KeyPoints-ResNet50": " Explorar variantes lightweight (MoveNet/BlazePose) o caja→pose.",
+        "BBoxes-YOLOv4tiny": " Ajustar umbral/NMS y definir ROI; reducir resolución si hay oclusiones.",
+        "FlowerAI": " Sincronizar ciclos de captura/proceso y tasa de muestreo; evaluar ventanas de suavizado.",
     }
     if method in suggestions:
         note += suggestions[method]
+
     return note
 
 def save_tables(results, out_dir):
