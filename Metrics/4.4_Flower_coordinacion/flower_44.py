@@ -354,7 +354,6 @@ def save_simple_baseline_table_markdown(metrics, tables_dir):
         metrics (dict): Baseline metrics.
         tables_dir (str): Output directory for tables.
     """
-    import pandas as pd
 
     # Save CSV
     csv_path = os.path.join(tables_dir, "tabla_44_coordinacion.csv")
