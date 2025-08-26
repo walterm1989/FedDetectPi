@@ -15,16 +15,20 @@ import matplotlib.pyplot as plt
 def load_data(input_path, only_methods=None):
     df = pd.read_csv(input_path)
     df.columns = [col.strip() for col in df.columns]
+    # Standardize to lowercase column 'method'
+    if 'Method' in df.columns:
+        df = df.rename(columns={'Method': 'method'})
+    df.columns = [c.lower() if c.lower() == 'method' else c for c in df.columns]
 
-    # Ensure numeric columns (excluding 'Method', 'Frame', etc.)
-    non_numeric = ['Method', 'Frame', 'Timestamp', 'Video', 'Extra']
+    # Ensure numeric columns (excluding 'method', 'frame', etc.)
+    non_numeric = ['method', 'frame', 'timestamp', 'video', 'extra']
     for col in df.columns:
         if col not in non_numeric:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
     if only_methods:
-        df = df[df['Method'].isin(only_methods)]
-    filtered_methods = df['Method'].unique()
+        df = df[df['method'].isin(only_methods)]
+    filtered_methods = df['method'].unique()
     if len(filtered_methods) == 0:
         print("ERROR: After filtering, no methods remain. Exiting.", file=sys.stderr)
         sys.exit(1)
@@ -32,9 +36,9 @@ def load_data(input_path, only_methods=None):
 
 def compute_aggregates(df):
     result = []
-    method_groups = df.groupby('Method')
+    method_groups = df.groupby('method')
     for method, group in method_groups:
-        entry = {'Method': method}
+        entry = {'method': method}
         # Count frames
         entry['n_frames'] = group.shape[0]
 
@@ -92,10 +96,10 @@ def save_tables(df_agg, tables_dir):
     for col in df_export.columns:
         df_export[col] = df_export[col].apply(lambda v: "" if pd.isna(v) else v)
     # Save CSV
-    csv_path = os.path.join(tables_dir, "section4_summary.csv")
+    csv_path = os.path.join(tables_dir, "section4_comparativa.csv")
     df_export.to_csv(csv_path, index=False)
     # Save markdown
-    md_path = os.path.join(tables_dir, "section4_summary.md")
+    md_path = os.path.join(tables_dir, "section4_comparativa.md")
     with open(md_path, "w") as f:
         f.write(df_export.to_markdown(index=False))
 
@@ -103,8 +107,8 @@ def save_tables(df_agg, tables_dir):
 
 def plot_box(df, metric, ylabel, out_dir, fmt, dpi):
     plt.figure(figsize=(8, 5))
-    data = [df[df['Method'] == m][metric].dropna() for m in df['Method'].unique()]
-    plt.boxplot(data, labels=df['Method'].unique(), patch_artist=True, showmeans=True)
+    data = [df[df['method'] == m][metric].dropna() for m in df['method'].unique()]
+    plt.boxplot(data, labels=df['method'].unique(), patch_artist=True, showmeans=True)
     plt.ylabel(ylabel)
     plt.xlabel("Method")
     plt.grid(axis='y', linestyle='--', alpha=0.4)
@@ -115,11 +119,11 @@ def plot_box(df, metric, ylabel, out_dir, fmt, dpi):
     plt.close()
 
 def plot_hist(df, metric, out_dir, fmt, dpi, xlog=False):
-    methods = df['Method'].unique()
+    methods = df['method'].unique()
     plt.figure(figsize=(7, 4))
     bins = 30
     for m in methods:
-        vals = df[df['Method'] == m][metric].dropna()
+        vals = df[df['method'] == m][metric].dropna()
         if len(vals) == 0:
             continue
         plt.hist(vals, bins=bins, alpha=0.5, label=m, histtype='stepfilled', linewidth=1.5)
@@ -137,7 +141,7 @@ def plot_hist(df, metric, out_dir, fmt, dpi, xlog=False):
 
     # Individual method hists
     for m in methods:
-        vals = df[df['Method'] == m][metric].dropna()
+        vals = df[df['method'] == m][metric].dropna()
         if len(vals) == 0:
             continue
         plt.figure(figsize=(6, 4))
@@ -154,7 +158,7 @@ def plot_hist(df, metric, out_dir, fmt, dpi, xlog=False):
         plt.close()
 
 def plot_summary_bars(df_agg, metric, ylabel, title, out_dir, fname, fmt, dpi, annotate=True, sort_desc=True):
-    df_plot = df_agg[['Method', metric]].copy()
+    df_plot = df_agg[['method', metric]].copy()
     # filter NaN
     df_plot = df_plot[df_plot[metric].notna()]
     if sort_desc:
@@ -162,7 +166,7 @@ def plot_summary_bars(df_agg, metric, ylabel, title, out_dir, fname, fmt, dpi, a
     else:
         df_plot = df_plot.sort_values(metric, ascending=True)
     plt.figure(figsize=(8, 4))
-    bars = plt.bar(df_plot['Method'], df_plot[metric], color='C0', alpha=0.7, edgecolor='k')
+    bars = plt.bar(df_plot['method'], df_plot[metric], color='C0', alpha=0.7, edgecolor='k')
     plt.ylabel(ylabel)
     plt.xlabel("Method")
     plt.title(title)
@@ -178,7 +182,7 @@ def plot_summary_bars(df_agg, metric, ylabel, title, out_dir, fname, fmt, dpi, a
     plt.close()
 
 def plot_grouped_bars(df_agg, metric1, metric2, ylabel, title, out_dir, fname, fmt, dpi):
-    methods = df_agg['Method']
+    methods = df_agg['method']
     vals1 = df_agg[metric1].values
     vals2 = df_agg[metric2].values
     x = np.arange(len(methods))
@@ -206,13 +210,46 @@ def plot_grouped_bars(df_agg, metric1, metric2, ylabel, title, out_dir, fname, f
 # --- Main ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Section 4: Generate summary tables and plots from metrics CSV")
-    parser.add_argument("--input", type=str, default="Metrics/out/section4_metrics_all.csv", help="Input CSV file path")
-    parser.add_argument("--out", type=str, default="Metrics/out", help="Output base directory for graphs")
-    parser.add_argument("--tables", type=str, default="Metrics/out/tables", help="Output directory for tables")
-    parser.add_argument("--format", type=str, choices=["png", "pdf"], default="png", help="Image format")
-    parser.add_argument("--dpi", type=int, default=120, help="Image DPI")
-    parser.add_argument("--only", type=str, nargs="*", default=None, help="Only include these methods")
+    parser = argparse.ArgumentParser(
+        description="Section 4: Generate summary tables and plots from metrics CSV"
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="Metrics/out/section4_metrics_all.csv",
+        help="Input CSV file path"
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        default="Metrics/graficas",
+        help="Output base directory for graphs (default: Metrics/graficas)"
+    )
+    parser.add_argument(
+        "--tables",
+        type=str,
+        default="Metrics/out/summary",
+        help="Output directory for summary tables (default: Metrics/out/summary)"
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["png", "pdf"],
+        default="png",
+        help="Image format"
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=200,
+        help="Image DPI (default: 200)"
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="Comma-separated list of methods to include (e.g. --only=YOLO,Keypoints)"
+    )
     args = parser.parse_args()
 
     # Output dirs
@@ -220,9 +257,14 @@ def main():
     os.makedirs(graphs_dir, exist_ok=True)
     os.makedirs(args.tables, exist_ok=True)
 
+    # Parse --only as comma-separated string
+    only_methods = None
+    if args.only:
+        only_methods = [m.strip() for m in args.only.split(",") if m.strip()]
+
     # Load data
-    df = load_data(args.input, only_methods=args.only)
-    methods = df['Method'].unique()
+    df = load_data(args.input, only_methods=only_methods)
+    methods = df['method'].unique()
 
     # Compute aggregate summary table
     df_agg = compute_aggregates(df)
@@ -260,7 +302,9 @@ def main():
         "RAM Usage per Method (mean, P95)", graphs_dir, "resumen_ram_mb."+args.format, args.format, args.dpi
     )
 
-    print("Plots and summary tables generated in", args.out, args.tables)
+    print(f"\n✅ Graphs saved in: {os.path.abspath(graphs_dir)}")
+    print(f"✅ Summary tables saved in: {os.path.abspath(args.tables)}")
+    print("Done.")
 
 if __name__ == "__main__":
     main()
