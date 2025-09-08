@@ -1,0 +1,7 @@
+# Dependencias para Raspberry Pi 4 (64-bit) y portátil
+# Preferir opencv-python-headless en Raspberry si no se usa GUI
+opencv-python-headless
+numpy
+psutil
+flwr
+python-dotenv
