@@ -1,0 +1,6 @@
+opencv-python-headless
+numpy
+psutil
+flwr
+torch
+torchvision
