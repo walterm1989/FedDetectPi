@@ -284,7 +284,7 @@ def main() -> None:
 
     try:
         end_time = time.time() + int(args.duration)
-        while time.time() &lt; end_time:
+        while time.time() < end_time:
             ret, frame = cap.read()
             if not ret:
                 # Para vídeo, si termina, detenemos
@@ -315,14 +315,14 @@ def main() -> None:
             if args.show:
                 vis = draw_boxes(frame.copy(), boxes)
                 cv2.imshow("BBoxes - YOLOv4-tiny (person)", vis)
-                if cv2.waitKey(1) &amp; 0xFF == 27:
+                if cv2.waitKey(1) & 0xFF == 27:
                     # ESC para salir
                     break
 
             # Métricas
             t_end = perf_counter()
             latency_ms = (t_end - t_start) * 1000.0
-            fps_inst = 1000.0 / latency_ms if latency_ms &gt; 0 else 0.0
+            fps_inst = 1000.0 / latency_ms if latency_ms > 0 else 0.0
             cpu_pct = psutil.cpu_percent(interval=None)
             ram_mb = proc.memory_info().rss / (1024 * 1024)
             timestamp_iso = datetime.now().isoformat()
@@ -343,9 +343,9 @@ def main() -> None:
 
             # Log periódico
             now = perf_counter()
-            if now - last_log &gt;= 2.0 and frame_idx &gt; 0:
+            if now - last_log >= 2.0 and frame_idx > 0:
                 elapsed = now - t0
-                fps_avg = frame_idx / elapsed if elapsed &gt; 0 else 0.0
+                fps_avg = frame_idx / elapsed if elapsed > 0 else 0.0
                 print(f"[Loop] frames={frame_idx} fps_avg={fps_avg:.2f} cpu={cpu_pct:.1f}% det={detections} (round={cfg_now.server_round} sz={cfg_now.input_size})")
                 last_log = now
 
