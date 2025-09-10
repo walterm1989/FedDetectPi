@@ -73,7 +73,8 @@ class ControlPlaneClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.shared.update_from_dict(config or {})
-        return parameters, 0, {}
+        # No entrenamos; devolver un número de ejemplos positivo para evitar ZeroDivisionError en FedAvg
+        return parameters, 1, {}
 
     def evaluate(self, parameters, config):
         return 0.0, 0, {}
