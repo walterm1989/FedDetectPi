@@ -7,6 +7,7 @@ Estructura
 - client_raspberry.py: cliente que ejecuta inferencia (CPU) sobre webcam, aplicando la configuración recibida. Si no hay servidor, funciona en modo local con valores por defecto.
 - utils/metrics.py: helpers de CSV (cabecera fija).
 - utils/draw.py: utilidades para dibujar esqueletos COCO sobre la imagen (opcional).
+- utils/camera.py: utilidades para abrir la webcam de forma robusta (mismo interfaz que en BoundingBoxes).
 - requirements.txt: dependencias mínimas (CPU).
 - Metrics/: carpeta de salida para CSVs.
 
@@ -42,13 +43,13 @@ Nota: Si no puede descargar los pesos del modelo en tiempo de ejecución, puede 
 Ejecución
 
 Servidor (plano de control):
-python3 FlowerAI_KeyPoints/server.py --address 0.0.0.0:8080 --rounds 1 --conf 0.5 --input-size 640 --draw 0
+python FlowerAI_KeyPoints/server.py --address 0.0.0.0:8080 --rounds 1 --conf 0.5 --input-size 640 --draw 0
 
-Cliente (Raspberry, webcam índice 0, 60s):
-python3 FlowerAI_KeyPoints/client_raspberry.py --server 192.168.1.50:8080 --cam-index 0 --duration 60 --metrics-dir Metrics
+Cliente Raspberry con Flower:
+python3 FlowerAI_KeyPoints/client_raspberry.py --server <IP_DEL_PORTATIL>:8080 --cam-index 0 --duration 60 --metrics-dir FlowerAI_KeyPoints/Metrics
 
-Modo local (sin servidor Flower):
-python3 FlowerAI_KeyPoints/client_raspberry.py --cam-index 0 --duration 60 --metrics-dir Metrics
+Cliente Raspberry sin Flower (local 60 s):
+python3 FlowerAI_KeyPoints/client_raspberry.py --cam-index 0 --duration 60 --metrics-dir FlowerAI_KeyPoints/Metrics
 
 Configuración publicada por servidor
 - conf_thr (float, default 0.5): umbral de confianza.
@@ -57,7 +58,8 @@ Configuración publicada por servidor
 - draw (bool, 0/1): si se desea visualizar esqueleto sobre la imagen en el cliente.
 
 CSV de métricas
-- Nombre: Metrics/YYYYmmdd_HHMMSS_KeyPoints-resnet50_webcam.csv
+- Directorio por defecto: FlowerAI_KeyPoints/Metrics/
+- Nombre: YYYYmmdd_HHMMSS_KeyPoints-resnet50_webcam.csv
 - Cabecera y orden exacto de columnas:
   timestamp,method,source,frame_idx,latency_ms,fps_inst,cpu_pct,ram_mb,detections
 - Definiciones:

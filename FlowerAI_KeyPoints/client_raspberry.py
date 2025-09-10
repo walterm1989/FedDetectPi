@@ -25,37 +25,11 @@ import torch
 
 import flwr as fl
 
-from FlowerAI_KeyPoints.utils.metrics import open_metrics_csv, write_metrics_row
-from FlowerAI_KeyPoints.utils.draw import draw_boxes, draw_keypoints_and_skeleton
+from utils.metrics import open_metrics_csv, write_metrics_row
+from utils.draw import draw_boxes, draw_keypoints_and_skeleton
+from utils.camera import list_video_devices_linux, open_webcam_with_fallback
 
 METHOD_NAME = "KeyPoints-resnet50"
-
-
-# Utilidades locales de cámara (evitamos dependencias cruzadas)
-def list_video_devices_linux() -> list:
-    if os.name != "posix":
-        return []
-    import glob
-    return sorted(glob.glob("/dev/video*"))
-
-def try_open_camera(index: int, width: Optional[int] = None, height: Optional[int] = None) -> Tuple[Optional[cv2.VideoCapture], int]:
-    cap = cv2.VideoCapture(index)
-    if not cap.isOpened():
-        cap.release()
-        return None, -1
-    if width:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    if height:
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    return cap, index
-
-def open_webcam_with_fallback(preferred_index: int = 0, width: Optional[int] = None, height: Optional[int] = None) -> Tuple[cv2.VideoCapture, int]:
-    indices = [preferred_index] + [i for i in range(0, 4) if i != preferred_index]
-    for idx in indices:
-        cap, opened_idx = try_open_camera(idx, width=width, height=height)
-        if cap is not None:
-            return cap, opened_idx
-    raise RuntimeError("No se pudo abrir ninguna cámara en índices 0..3")
 
 
 @dataclass
@@ -120,7 +94,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--server", type=str, default=None, help="Dirección host:puerto del servidor Flower (opcional)")
     p.add_argument("--cam-index", type=int, default=0, help="Índice de cámara (webcam)")
     p.add_argument("--duration", type=int, default=60, help="Duración mínima en segundos (por defecto 60)")
-    p.add_argument("--metrics-dir", type=str, default="Metrics", help="Directorio de salida para CSV")
+    p.add_argument("--metrics-dir", type=str, default="FlowerAI_KeyPoints/Metrics", help="Directorio de salida para CSV")
     p.add_argument("--weights", type=str, default=None, help="Ruta local a checkpoint del modelo (fallback si no hay red)")
     p.add_argument("--draw", type=int, choices=[0, 1], default=None, help="Forzar dibujado local (override); por defecto usa config del servidor")
     return p
@@ -310,7 +284,7 @@ def main() -> None:
             write_metrics_row(f_csv, {
                 "timestamp": timestamp_iso,
                 "method": METHOD_NAME,
-                "source": source_desc,
+                "source": "webcam",
                 "frame_idx": frame_idx,
                 "latency_ms": round(latency_ms, 3),
                 "fps_inst": round(fps_inst, 3),
