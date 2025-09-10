@@ -85,8 +85,8 @@ class ControlPlaneClient(fl.client.NumPyClient):
         # Recibimos configuración del servidor y la volcamos en el estado compartido.
         # Devolvemos parámetros sin cambios.
         self.shared.update_from_dict(config or {})
-        # No entrenamos, devolvemos lo que recibimos
-        return parameters, 0, {}
+        # No entrenamos; devolvemos un conteo ficticio positivo para evitar ZeroDivisionError en FedAvg
+        return parameters, 1, {}
 
     def evaluate(self, parameters, config):
         # Sin evaluación
