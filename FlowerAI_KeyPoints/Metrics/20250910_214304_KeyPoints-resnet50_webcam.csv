@@ -1,0 +1,3 @@
+timestamp,method,source,frame_idx,latency_ms,fps_inst,cpu_pct,ram_mb,detections
+2025-09-10T21:43:33.454,KeyPoints-resnet50,webcam,0,28643.717,0.035,323.6,773.49,2
+2025-09-10T21:44:02.007,KeyPoints-resnet50,webcam,1,28541.274,0.035,394.6,803.88,3
