@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 
@@ -125,8 +126,8 @@ def coerce_cpu_percent(series: pd.Series) -> pd.Series:
 
 
 def parse_timestamp(col: pd.Series) -> pd.Series:
-    # Try direct parse
-    ts = pd.to_datetime(col, errors="coerce", utc=True, infer_datetime_format=True)
+    # Try direct parse (naive, sin tz)
+    ts = pd.to_datetime(col, errors="coerce", infer_datetime_format=True)
     # If still many NaT and values numeric, try epoch heuristics
     needs = ts.isna()
     if needs.any():
@@ -137,15 +138,21 @@ def parse_timestamp(col: pd.Series) -> pd.Series:
             # microseconds
             mask = nums >= 1e15
             if mask.any():
-                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="us", utc=True)
+                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="us")
             # milliseconds
             mask = (nums >= 1e12) & (nums < 1e15)
             if mask.any():
-                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="ms", utc=True)
+                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="ms")
             # seconds (unix epoch)
             mask = (nums >= 1e9) & (nums < 1e12)
             if mask.any():
-                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="s", utc=True)
+                ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="s")
+    # Ensure naive (no tz)
+    try:
+        ts = ts.dt.tz_localize(None)
+    except Exception:
+        # If already naive or dt accessor fails, keep as is
+        pass
     return ts
 
 
@@ -157,8 +164,8 @@ def extract_datetime_from_filename(path: str) -> Optional[pd.Timestamp]:
     ymd = m.group(1)
     hms = m.group(2)
     try:
-        dt = datetime.strptime(ymd + hms, "%Y%m%d%H%M%S")
-        return pd.Timestamp(dt, tz="UTC")
+        dt = datetime.strptime(ymd + hms, "%Y%m%d%H%M%S")  # naive
+        return pd.Timestamp(dt)
     except Exception:
         return None
 
@@ -168,6 +175,8 @@ def standardize_dataframe(
 ) -> Tuple[pd.DataFrame, Dict[str, any]]:
     # Record raw columns
     raw_columns = list(df.columns)
+    before_rows = int(len(df))
+    before_cols = list(df.columns)
 
     # Map columns according to synonyms
     col_map: Dict[str, str] = {}  # src_col -> standard
@@ -218,23 +227,42 @@ def standardize_dataframe(
     if fps is None and latency is None:
         raise ValueError("Neither fps nor latency_ms present or derivable.")
 
-    # cpu_percent
-    cpu = None
+    # cpu_percent with median imputation if present, else 0
+    cpu_imputed_median_count = 0
     if any(v == "cpu_percent" for v in col_map.values()):
         orig = [k for k, v in col_map.items() if v == "cpu_percent"][0]
-        cpu = coerce_cpu_percent(df[orig]).fillna(0)
+        cpu_raw = df[orig]
+        # normalize string symbols and commas, then to float
+        cpu_norm = cpu_raw.astype(str).str.replace("%", "", regex=False).str.replace(",", ".", regex=False).str.strip()
+        cpu_series = pd.to_numeric(cpu_norm, errors="coerce")
+        # normalize 0-1 to 0-100 if applicable
+        finite = cpu_series.dropna()
+        if len(finite) and finite.max() <= 1.2:
+            cpu_series = cpu_series * 100.0
+        med_cpu = float(finite.median()) if len(finite) else 0.0
+        mask_na = cpu_series.isna()
+        cpu_series = cpu_series.fillna(med_cpu if not pd.isna(med_cpu) else 0.0)
+        cpu_series = cpu_series.clip(0.0, 100.0)
+        cpu_imputed_median_count = int(np.count_nonzero(mask_na & (cpu_series == med_cpu)))
+        cpu = cpu_series
     else:
-        # Default to 0 to satisfy "sin nulos" and valid range [0,100]
         cpu = pd.Series(0.0, index=df.index, dtype="float")
+        med_cpu = 0.0
 
-    # ram_mb
-    ram = None
+    # ram_mb with median imputation if present, else 0
+    ram_imputed_median_count = 0
     if any(v == "ram_mb" for v in col_map.values()):
         orig = [k for k, v in col_map.items() if v == "ram_mb"][0]
-        ram = pd.to_numeric(df[orig], errors="coerce").fillna(0)
+        ram_series = pd.to_numeric(df[orig], errors="coerce")
+        med_ram = float(ram_series.dropna().median()) if ram_series.dropna().size else 0.0
+        mask_na = ram_series.isna()
+        ram_series = ram_series.fillna(med_ram if not pd.isna(med_ram) else 0.0)
+        ram_series = ram_series.clip(lower=0.0)
+        ram_imputed_median_count = int(np.count_nonzero(mask_na & (ram_series == med_ram)))
+        ram = ram_series
     else:
-        # Default to 0 MB if not present
         ram = pd.Series(0.0, index=df.index, dtype="float")
+        med_ram = 0.0
 
     # frame_idx
     frame_idx = None
@@ -259,8 +287,8 @@ def standardize_dataframe(
     if ts.isna().any():
         anchor = extract_datetime_from_filename(src_path)
         if anchor is None:
-            # Deterministic anchor
-            anchor = pd.Timestamp(datetime(2025, 1, 1, 0, 0, 0), tz="UTC")
+            # Deterministic anchor naive, sin tz
+            anchor = pd.Timestamp(datetime(2025, 1, 1, 0, 0, 0))
         # spacing based on median fps or fallback 0.2s (5 fps)
         fps_median = None
         if fps is not None and pd.api.types.is_numeric_dtype(fps):
@@ -277,7 +305,13 @@ def standardize_dataframe(
         ts = ts.fillna(ts_filled)
 
     # Assemble standardized frame
-    work["timestamp"] = ts
+    # Ensure naive and no 'Z' by converting to ISO string without tz
+    try:
+        ts = ts.dt.tz_localize(None)
+    except Exception:
+        pass
+    ts_iso = ts.dt.isoformat()
+    work["timestamp"] = ts_iso
     work["fps"] = pd.to_numeric(fps, errors="coerce")
     work["latency_ms"] = pd.to_numeric(latency, errors="coerce")
     work["cpu_percent"] = pd.to_numeric(cpu, errors="coerce")
@@ -324,16 +358,27 @@ def standardize_dataframe(
     work = work.sort_index(kind="stable")
 
     # Summary for this file
+    after_rows = int(len(work))
+    rows_dropped = max(0, before_rows - after_rows)
     summary = {
-        "rows": int(len(df)),
+        "rows": before_rows,
         "raw_columns": raw_columns,
         "method": method,
         "model": model,
         "scope": scope,
         "file_source": os.path.relpath(src_path, raw_dir).replace("\\", "/"),
-        "rows_kept": int(len(work)),
-        "timestamp_min": pd.to_datetime(work["timestamp"]).min(),
-        "timestamp_max": pd.to_datetime(work["timestamp"]).max(),
+        "rows_kept": after_rows,
+        "rows_dropped": rows_dropped,
+        "timestamp_min": pd.to_datetime(work["timestamp"]).min() if after_rows else None,
+        "timestamp_max": pd.to_datetime(work["timestamp"]).max() if after_rows else None,
+        "before_cols": before_cols,
+        "imput_counts": {
+            "cpu_percent_median_fill": cpu_imputed_median_count,
+            "ram_mb_median_fill": ram_imputed_median_count,
+            "rows_dropped": rows_dropped,
+        },
+        "med_cpu": med_cpu,
+        "med_ram": med_ram,
     }
 
     return work, summary
@@ -348,26 +393,38 @@ def process_all(raw_dir: str, out_path: str, write_readme: bool = True) -> None:
     all_frames: List[pd.DataFrame] = []
     summaries: List[Dict[str, any]] = []
 
+    incidents: List[Tuple[str, str]] = []
+
     for path in csvs:
         try:
             df = pd.read_csv(path)
         except Exception as e:
             print(f"Skipping file due to read error: {path}: {e}")
+            incidents.append((os.path.relpath(path, raw_dir).replace('\\', '/'), f"read_error: {e}"))
             continue
 
         try:
             std_df, summary = standardize_dataframe(df, path, raw_dir)
         except Exception as e:
             print(f"Skipping file due to standardization error: {path}: {e}")
+            incidents.append((os.path.relpath(path, raw_dir).replace('\\', '/'), f"standardization_error: {e}"))
             continue
 
         all_frames.append(std_df)
         summaries.append(summary)
 
-        # Per-file summary line
+        # Per-file summary line (ampliado)
         rel = summary["file_source"]
         scope = summary["scope"]
-        print(f"[scope={scope}] {rel}: filas={summary['rows']}, columnas_crudas={summary['raw_columns']}, method/model inferidos={summary['method']}/{summary['model']}")
+        ic = summary["imput_counts"]
+        before_n = summary["rows"]
+        after_n = summary["rows_kept"]
+        before_cols = summary["before_cols"]
+        print(
+            f"- [{scope}] {rel} | filas={before_n}->{after_n} | cols={before_cols} | "
+            f"method/model={summary['method']}/{summary['model']} | "
+            f"imput(cpu_med,ram_med)={ic['cpu_percent_median_fill']},{ic['ram_mb_median_fill']}"
+        )
 
     if not all_frames:
         print("No standardized data produced; nothing to write.")
@@ -403,9 +460,18 @@ def process_all(raw_dir: str, out_path: str, write_readme: bool = True) -> None:
         lines.append(f"- Rango de timestamp: [{ts_min}, {ts_max}]\n")
         lines.append("## Archivos procesados")
         for s in summaries:
+            ic = s["imput_counts"]
             lines.append(
-                f"- [scope={s['scope']}] {s['file_source']}: filas_crudas={s['rows']}, filas_conservadas={s['rows_kept']}, columnas_crudas={s['raw_columns']}, method/model={s['method']}/{s['model']}, rango=[{s['timestamp_min']}, {s['timestamp_max']}]"
+                f"- [scope={s['scope']}] {s['file_source']}: filas_crudas={s['rows']}, filas_conservadas={s['rows_kept']}, columnas_crudas={s['raw_columns']}, method/model={s['method']}/{s['model']}, "
+                f"imput(cpu_med,ram_med)={ic['cpu_percent_median_fill']},{ic['ram_mb_median_fill']}, rango=[{s['timestamp_min']}, {s['timestamp_max']}]"
             )
+        # Incidents section
+        lines.append("\n## Archivos omitidos / incidencias")
+        if 'incidents' in locals() and incidents:
+            for rel_path, reason in incidents:
+                lines.append(f"- {rel_path}: motivo={reason}")
+        else:
+            lines.append("- (ninguna)")
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
