@@ -1,0 +1,7 @@
+metric,Flower_minus_Local,delta_pct_vs_Local
+fps_mean,-0.4787051282051282,-94.48127530364371
+latency_ms_mean,7040.262064102564,24.472489394847173
+cpu_percent_mean,100.0,
+ram_mb_mean,-49.98409254807689,-6.154418134525338
+efficiency_fps_per_10cpu,0.0027961538461538466,
+slow_frames_vs_localP95_%,100.0,

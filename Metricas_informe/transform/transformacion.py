@@ -126,33 +126,33 @@ def coerce_cpu_percent(series: pd.Series) -> pd.Series:
 
 
 def parse_timestamp(col: pd.Series) -> pd.Series:
-    # Try direct parse (naive, sin tz)
-    ts = pd.to_datetime(col, errors="coerce", infer_datetime_format=True)
-    # If still many NaT and values numeric, try epoch heuristics
+    # Parseo directo (naive, sin tz); quitar infer_datetime_format (deprecado)
+    ts = pd.to_datetime(col, errors="coerce")
+
+    # Si quedan NaT y hay números, intenta epoch (us/ms/s)
     needs = ts.isna()
     if needs.any():
-        # Try numeric conversion
         nums = pd.to_numeric(col[needs], errors="coerce")
         if nums.notna().any():
-            # Heuristic by magnitude
-            # microseconds
-            mask = nums >= 1e15
+            mask = nums >= 1e15  # microsegundos
             if mask.any():
                 ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="us")
-            # milliseconds
-            mask = (nums >= 1e12) & (nums < 1e15)
+            mask = (nums >= 1e12) & (nums < 1e15)  # milisegundos
             if mask.any():
                 ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="ms")
-            # seconds (unix epoch)
-            mask = (nums >= 1e9) & (nums < 1e12)
+            mask = (nums >= 1e9) & (nums < 1e12)   # segundos
             if mask.any():
                 ts.loc[needs[needs].index[mask]] = pd.to_datetime(nums[mask], unit="s")
-    # Ensure naive (no tz)
+
+    # Forzar naive: intenta quitar tz si existiera
     try:
-        ts = ts.dt.tz_localize(None)
-    except Exception:
-        # If already naive or dt accessor fails, keep as is
-        pass
+        ts = ts.dt.tz_convert(None)   # si venía tz-aware
+    except (TypeError, AttributeError):
+        try:
+            ts = ts.dt.tz_localize(None)  # si aplica
+        except (TypeError, AttributeError):
+            pass
+
     return ts
 
 
@@ -205,7 +205,7 @@ def standardize_dataframe(
         orig = [k for k, v in col_map.items() if v == "timestamp"][0]
         ts = parse_timestamp(df[orig])
     else:
-        ts = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
+        ts = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
 
     # fps
     fps = None
@@ -307,11 +307,14 @@ def standardize_dataframe(
     # Assemble standardized frame
     # Ensure naive and no 'Z' by converting to ISO string without tz
     try:
-        ts = ts.dt.tz_localize(None)
-    except Exception:
-        pass
-    ts_iso = ts.dt.isoformat()
-    work["timestamp"] = ts_iso
+        ts = ts.dt.tz_convert(None)
+    except (TypeError, AttributeError):
+        try:
+            ts = ts.dt.tz_localize(None)
+        except (TypeError, AttributeError):
+            pass
+    
+    work["timestamp"] = ts.dt.strftime("%Y-%m-%dT%H:%M:%S")
     work["fps"] = pd.to_numeric(fps, errors="coerce")
     work["latency_ms"] = pd.to_numeric(latency, errors="coerce")
     work["cpu_percent"] = pd.to_numeric(cpu, errors="coerce")
